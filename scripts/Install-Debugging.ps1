@@ -19,12 +19,27 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$nugetConfig = Join-Path $repoRoot "nuget.config"
 
-Write-Host "Building release..."
+Write-Host "Restoring NuGet packages..."
 Push-Location $repoRoot
 try {
+    if (-not (Test-Path $nugetConfig)) {
+        Write-Host "Adding nuget.org package source..."
+        dotnet nuget add source https://api.nuget.org/v3/index.json --name nuget.org | Out-Null
+    }
+
+    dotnet restore Debugging.sln -c Release
+    if ($LASTEXITCODE -ne 0) {
+        throw "NuGet restore failed. Ensure this machine can reach https://api.nuget.org."
+    }
+
+    Write-Host "Building release..."
     dotnet publish src\Debugging.Service\Debugging.Service.csproj -c Release -r win-x64 --self-contained false -o $InstallRoot
+    if ($LASTEXITCODE -ne 0) { throw "Service publish failed." }
+
     dotnet publish src\Debugging.Tray\Debugging.Tray.csproj -c Release -r win-x64 --self-contained false -o $InstallRoot
+    if ($LASTEXITCODE -ne 0) { throw "Tray publish failed." }
 }
 finally {
     Pop-Location
