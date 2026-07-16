@@ -1,0 +1,9 @@
+{
+  "Hostnames": [
+    "api2.cursor.sh",
+    "api5.cursor.sh"
+  ],
+  "AdapterName": null,
+  "Gateway": null,
+  "RefreshSeconds": 30
+}
