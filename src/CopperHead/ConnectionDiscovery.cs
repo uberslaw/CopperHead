@@ -13,10 +13,14 @@ public sealed record DiscoveredEndpoint(
 {
     public string DisplayKey => Hostname ?? RemoteAddress.ToString();
 
-    public override string ToString() =>
-        Hostname is null
+    public override string ToString()
+    {
+        if (ProcessId == 0 && RemotePort == 0)
+            return DisplayKey; // persisted / not currently live
+        return Hostname is null
             ? $"{RemoteAddress}:{RemotePort}  ←  {ProcessName} ({ProcessId})"
             : $"{Hostname}  ({RemoteAddress}:{RemotePort})  ←  {ProcessName} ({ProcessId})";
+    }
 }
 
 /// <summary>

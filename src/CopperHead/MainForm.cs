@@ -33,17 +33,33 @@ public sealed class MainForm : Form
 
     // Discover tab
     private readonly TextBox _watchProcesses = new() { Dock = DockStyle.Fill, PlaceholderText = "Cursor, MyLicenseApp" };
-    private readonly ListBox _discoveries = new() { Dock = DockStyle.Fill, IntegralHeight = false, SelectionMode = SelectionMode.MultiExtended };
+    private readonly Button _applyProcess = new() { Text = "Apply process", AutoSize = true };
+    private readonly ListBox _newDiscoveries = new() { Dock = DockStyle.Fill, IntegralHeight = false, SelectionMode = SelectionMode.MultiExtended };
+    private readonly ListBox _prevDiscoveries = new() { Dock = DockStyle.Fill, IntegralHeight = false, SelectionMode = SelectionMode.MultiExtended };
     private readonly Button _scanNow = new() { Text = "Scan now", AutoSize = true };
     private readonly Button _watchDiscover = new() { Text = "Watch", AutoSize = true };
     private readonly Button _stopWatchDiscover = new() { Text = "Stop watch", AutoSize = true, Enabled = false };
     private readonly Button _addSelected = new() { Text = "Add selected to hosts", AutoSize = true };
-    private readonly Button _addAll = new() { Text = "Add all to hosts", AutoSize = true };
+    private readonly Button _addAll = new() { Text = "Add all new to hosts", AutoSize = true };
     private readonly CheckBox _autoAdd = new() { Text = "Auto-add new discoveries", AutoSize = true };
     private readonly NumericUpDown _discoverInterval = new() { Minimum = 5, Maximum = 600, Value = 15, Width = 70 };
     private readonly TextBox _hostListUrl = new() { Dock = DockStyle.Fill, PlaceholderText = "https://raw.githubusercontent.com/.../hosts.txt" };
     private readonly Button _fetchList = new() { Text = "Fetch list", AutoSize = true };
     private readonly Label _discoverStatus = new() { Text = "Idle", AutoSize = true, Padding = new Padding(8, 6, 0, 0) };
+
+    // Logs tab
+    private readonly ListView _logSessions = new()
+    {
+        Dock = DockStyle.Fill,
+        View = View.Details,
+        FullRowSelect = true,
+        HideSelection = false,
+        MultiSelect = false,
+    };
+    private readonly Button _logsRefresh = new() { Text = "Refresh", AutoSize = true };
+    private readonly Button _logsOpenHtml = new() { Text = "Open HTML report", AutoSize = true };
+    private readonly Button _logsOpenFolder = new() { Text = "Open folder", AutoSize = true };
+    private readonly WebBrowser _logBrowser = new() { Dock = DockStyle.Fill, ScriptErrorsSuppressed = true };
 
     // Traffic tab
     private readonly ListView _trafficList = new()
@@ -66,10 +82,15 @@ public sealed class MainForm : Form
     private readonly HostRouteService _service = new();
     private readonly TraceRouteRunner _tracer;
     private readonly TrafficMonitor _traffic;
+    private readonly SessionLogStore _sessionLog = new();
     private readonly Dictionary<string, DiscoveredEndpoint> _discovered = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _knownBeforeSession = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _sessionNewKeys = new(StringComparer.OrdinalIgnoreCase);
     private List<TrafficRow> _trafficRows = [];
     private int _trafficSortColumn = 8; // All time TX
     private bool _trafficSortAsc; // false = descending
+    private bool _couplingMonitors;
+    private string _activeProcessKey = "";
 
     private CancellationTokenSource? _loopCts;
     private CancellationTokenSource? _refreshNowCts;
@@ -111,18 +132,20 @@ public sealed class MainForm : Form
         trayMenu.Items.Add("Stop & Exit", null, async (_, _) =>
         {
             await StopAsync();
-            await StopDiscoverWatchAsync();
-            await StopTrafficMonitorAsync();
+            await StopBothMonitorsAsync();
             Close();
         });
         _tray.ContextMenuStrip = trayMenu;
 
         InitTrafficList();
 
+        InitLogSessionsList();
+
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(BuildRoutesTab());
         tabs.TabPages.Add(BuildDiscoverTab());
         tabs.TabPages.Add(BuildTrafficTab());
+        tabs.TabPages.Add(BuildLogsTab());
 
         var footer = new Label
         {
@@ -139,7 +162,12 @@ public sealed class MainForm : Form
         _service.Log += msg =>
         {
             if (IsDisposed) return;
-            BeginInvoke(() => _log.AppendText(msg + Environment.NewLine));
+            BeginInvoke(() =>
+            {
+                _log.AppendText(msg + Environment.NewLine);
+                try { _sessionLog.Write("route", msg); }
+                catch { /* ignore */ }
+            });
         };
 
         WireEvents();
@@ -148,7 +176,9 @@ public sealed class MainForm : Form
         {
             LoadAdapters();
             ApplyConfig(AppConfig.LoadOrDefault());
-            AppendLog("CopperHead ready. Routes tab for tether routing; Discover tab to find hosts or pull a git-hosted list.");
+            ApplyProcessContext(force: true);
+            RefreshLogsList();
+            AppendLog("CopperHead ready. Discover/Traffic start together; logs are per process under logs\\.");
         };
 
         FormClosing += async (_, e) =>
@@ -158,8 +188,7 @@ public sealed class MainForm : Form
                 e.Cancel = true;
                 _exitAfterStop = true;
                 _traceCts?.Cancel();
-                await StopDiscoverWatchAsync();
-                await StopTrafficMonitorAsync();
+                await StopBothMonitorsAsync();
                 await StopAsync();
                 _tray.Visible = false;
                 Close();
@@ -263,19 +292,62 @@ public sealed class MainForm : Form
 
         root.Controls.Add(new Label
         {
-            Text = "Watch process names (comma-separated, no .exe needed). Uses TCP table + DNS cache — no packet capture.",
+            Text = "Process to track (comma-separated OK). Apply process switches the log file. Watch also starts Traffic.",
             AutoSize = true,
             Padding = new Padding(0, 0, 0, 4),
         }, 0, 0);
 
-        var procRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true };
+        var procRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
         procRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         procRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        procRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         procRow.Controls.Add(new Label { Text = "Processes", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
         procRow.Controls.Add(_watchProcesses, 1, 0);
+        procRow.Controls.Add(_applyProcess, 2, 0);
         root.Controls.Add(procRow, 0, 1);
 
-        root.Controls.Add(_discoveries, 0, 2);
+        var split = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Horizontal,
+            SplitterWidth = 6,
+        };
+        // Avoid tiny panels before layout
+        split.Panel1MinSize = 80;
+        split.Panel2MinSize = 80;
+
+        var newPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        newPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        newPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        newPanel.Controls.Add(new Label
+        {
+            Text = "Newly discovered",
+            Font = new Font(Font, FontStyle.Bold),
+            AutoSize = true,
+            Padding = new Padding(0, 0, 0, 4),
+        }, 0, 0);
+        newPanel.Controls.Add(_newDiscoveries, 0, 1);
+
+        var prevPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        prevPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        prevPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        prevPanel.Controls.Add(new Label
+        {
+            Text = "Previously discovered",
+            Font = new Font(Font, FontStyle.Bold),
+            AutoSize = true,
+            Padding = new Padding(0, 4, 0, 4),
+        }, 0, 0);
+        prevPanel.Controls.Add(_prevDiscoveries, 0, 1);
+
+        split.Panel1.Controls.Add(newPanel);
+        split.Panel2.Controls.Add(prevPanel);
+        root.Controls.Add(split, 0, 2);
+        page.HandleCreated += (_, _) =>
+        {
+            try { split.SplitterDistance = Math.Max(120, split.Height / 2); }
+            catch { /* ignore */ }
+        };
 
         var btnRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Padding = new Padding(0, 6, 0, 4) };
         btnRow.Controls.Add(_scanNow);
@@ -305,6 +377,46 @@ public sealed class MainForm : Form
         urlRow.Controls.Add(_fetchList, 2, 0);
         root.Controls.Add(urlRow, 0, 5);
 
+        page.Controls.Add(root);
+        return page;
+    }
+
+    private void InitLogSessionsList()
+    {
+        _logSessions.Columns.Add("Process", 160);
+        _logSessions.Columns.Add("Events", 70);
+        _logSessions.Columns.Add("Known endpoints", 110);
+        _logSessions.Columns.Add("Last activity", 160);
+        _logSessions.SelectedIndexChanged += (_, _) => PreviewSelectedLog();
+    }
+
+    private TabPage BuildLogsTab()
+    {
+        var page = new TabPage("Logs");
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 3,
+            Padding = new Padding(10),
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 35f));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 65f));
+
+        var btnRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
+        btnRow.Controls.Add(new Label
+        {
+            Text = "Per-process history (HTML report). Changing the tracked process switches the active log.",
+            AutoSize = true,
+            Padding = new Padding(0, 6, 12, 0),
+        });
+        btnRow.Controls.Add(_logsRefresh);
+        btnRow.Controls.Add(_logsOpenHtml);
+        btnRow.Controls.Add(_logsOpenFolder);
+        root.Controls.Add(btnRow, 0, 0);
+        root.Controls.Add(_logSessions, 0, 1);
+        root.Controls.Add(_logBrowser, 0, 2);
         page.Controls.Add(root);
         return page;
     }
@@ -418,12 +530,18 @@ public sealed class MainForm : Form
         _cancelTrace.Click += (_, _) => _traceCts?.Cancel();
         _scanNow.Click += (_, _) => RunDiscovery(autoAdd: _autoAdd.Checked);
         _watchDiscover.Click += async (_, _) => await StartDiscoverWatchAsync();
-        _stopWatchDiscover.Click += async (_, _) => await StopDiscoverWatchAsync();
+        _stopWatchDiscover.Click += async (_, _) => await StopBothMonitorsAsync();
         _addSelected.Click += (_, _) => AddDiscoveriesToHosts(selectedOnly: true);
-        _addAll.Click += (_, _) => AddDiscoveriesToHosts(selectedOnly: false);
+        _addAll.Click += (_, _) => AddDiscoveriesToHosts(selectedOnly: false, newOnly: true);
         _fetchList.Click += async (_, _) => await FetchHostListAsync();
+        _applyProcess.Click += (_, _) =>
+        {
+            ApplyProcessContext(force: true);
+            SaveConfig();
+        };
+        _watchProcesses.Leave += (_, _) => ApplyProcessContext(force: false);
         _trafficStart.Click += async (_, _) => await StartTrafficMonitorAsync();
-        _trafficStop.Click += async (_, _) => await StopTrafficMonitorAsync();
+        _trafficStop.Click += async (_, _) => await StopBothMonitorsAsync();
         _trafficPin.Click += (_, _) => TogglePinSelected();
         _trafficResetSession.Click += (_, _) =>
         {
@@ -432,6 +550,9 @@ public sealed class MainForm : Form
             AppendLog("TRAFFIC session counters reset.");
         };
         _trafficActiveOnly.CheckedChanged += (_, _) => RefreshTrafficList();
+        _logsRefresh.Click += (_, _) => RefreshLogsList();
+        _logsOpenHtml.Click += (_, _) => OpenSelectedLogHtml(external: true);
+        _logsOpenFolder.Click += (_, _) => OpenSelectedLogFolder();
     }
 
     private void LoadAdapters()
@@ -528,8 +649,56 @@ public sealed class MainForm : Form
         AppendLog($"Saved {AppConfig.DefaultPath}");
     }
 
+    private void ApplyProcessContext(bool force)
+    {
+        var text = _watchProcesses.Text.Trim();
+        var key = SessionLogStore.SanitizeKey(text);
+        if (!force && string.Equals(key, _activeProcessKey, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        // Persist known endpoints for the outgoing process
+        if (_activeProcessKey.Length > 0)
+            PersistKnownFromUi();
+
+        _sessionLog.SetProcess(text.Length == 0 ? "unknown" : text);
+        _activeProcessKey = _sessionLog.ProcessKey;
+
+        _knownBeforeSession.Clear();
+        foreach (var k in _sessionLog.LoadKnownEndpoints())
+            _knownBeforeSession.Add(k);
+
+        _sessionNewKeys.Clear();
+        _discovered.Clear();
+        // Seed previously discovered from known memory
+        foreach (var k in _knownBeforeSession)
+        {
+            var isIp = System.Net.IPAddress.TryParse(k, out var ip);
+            _discovered[k] = new DiscoveredEndpoint(
+                "stored",
+                0,
+                isIp ? ip! : System.Net.IPAddress.Any,
+                0,
+                isIp ? null : k);
+        }
+
+        RefreshDiscoveryList();
+        AppendLog($"PROCESS context → {_sessionLog.DisplayName} (log: logs\\{_sessionLog.ProcessKey}\\)");
+        RefreshLogsList();
+    }
+
+    private void PersistKnownFromUi()
+    {
+        var all = _knownBeforeSession
+            .Concat(_sessionNewKeys)
+            .Concat(_discovered.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        _sessionLog.SaveKnownEndpoints(all);
+    }
+
     private void RunDiscovery(bool autoAdd)
     {
+        ApplyProcessContext(force: false);
+
         var names = _watchProcesses.Text
             .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (names.Length == 0)
@@ -541,26 +710,37 @@ public sealed class MainForm : Form
         try
         {
             var found = ConnectionDiscovery.Scan(names);
-            var newKeys = new List<string>();
+            var brandNew = new List<string>();
             foreach (var item in found)
             {
                 var key = item.DisplayKey;
-                if (_discovered.TryAdd(key, item))
-                    newKeys.Add(key);
-                else
-                    _discovered[key] = item;
+                _discovered[key] = item;
+
+                if (!_knownBeforeSession.Contains(key) && _sessionNewKeys.Add(key))
+                {
+                    brandNew.Add(key);
+                    _sessionLog.Write("discover", $"New endpoint: {item}", new
+                    {
+                        ip = item.RemoteAddress.ToString(),
+                        port = item.RemotePort,
+                        host = item.Hostname,
+                        process = item.ProcessName,
+                    });
+                }
             }
 
             RefreshDiscoveryList();
-            _discoverStatus.Text = $"{_discovered.Count} endpoint(s)";
-            AppendLog($"DISCOVER scanned {names.Length} name(s) → {found.Count} connection(s), {newKeys.Count} new");
+            _discoverStatus.Text = $"{_sessionNewKeys.Count} new / {_knownBeforeSession.Count} previous";
+            AppendLog($"DISCOVER {found.Count} live connection(s), {brandNew.Count} newly discovered");
 
-            if (autoAdd && newKeys.Count > 0)
+            if (autoAdd && brandNew.Count > 0)
             {
-                foreach (var key in newKeys)
+                foreach (var key in brandNew)
                     EnsureHostLine(key);
-                AppendLog($"DISCOVER auto-added: {string.Join(", ", newKeys)}");
+                AppendLog($"DISCOVER auto-added: {string.Join(", ", brandNew)}");
             }
+
+            PersistKnownFromUi();
         }
         catch (Exception ex)
         {
@@ -570,11 +750,29 @@ public sealed class MainForm : Form
 
     private void RefreshDiscoveryList()
     {
-        _discoveries.BeginUpdate();
-        _discoveries.Items.Clear();
-        foreach (var item in _discovered.Values.OrderBy(v => v.ToString(), StringComparer.OrdinalIgnoreCase))
-            _discoveries.Items.Add(item);
-        _discoveries.EndUpdate();
+        var newItems = _discovered.Values
+            .Where(v => _sessionNewKeys.Contains(v.DisplayKey))
+            .OrderBy(v => v.ToString(), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var prevItems = _discovered.Values
+            .Where(v => _knownBeforeSession.Contains(v.DisplayKey) && !_sessionNewKeys.Contains(v.DisplayKey))
+            .OrderBy(v => v.ToString(), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // Also show known keys that aren't in _discovered as plain strings via synthetic entries already seeded
+
+        _newDiscoveries.BeginUpdate();
+        _newDiscoveries.Items.Clear();
+        foreach (var item in newItems)
+            _newDiscoveries.Items.Add(item);
+        _newDiscoveries.EndUpdate();
+
+        _prevDiscoveries.BeginUpdate();
+        _prevDiscoveries.Items.Clear();
+        foreach (var item in prevItems)
+            _prevDiscoveries.Items.Add(item);
+        _prevDiscoveries.EndUpdate();
     }
 
     private void EnsureHostLine(string hostOrIp)
@@ -590,11 +788,22 @@ public sealed class MainForm : Form
         _hosts.AppendText(hostOrIp + Environment.NewLine);
     }
 
-    private void AddDiscoveriesToHosts(bool selectedOnly)
+    private void AddDiscoveriesToHosts(bool selectedOnly, bool newOnly = false)
     {
-        IEnumerable<DiscoveredEndpoint> items = selectedOnly
-            ? _discoveries.SelectedItems.Cast<DiscoveredEndpoint>()
-            : _discovered.Values;
+        IEnumerable<DiscoveredEndpoint> items;
+        if (selectedOnly)
+        {
+            items = _newDiscoveries.SelectedItems.Cast<DiscoveredEndpoint>()
+                .Concat(_prevDiscoveries.SelectedItems.Cast<DiscoveredEndpoint>());
+        }
+        else if (newOnly)
+        {
+            items = _discovered.Values.Where(v => _sessionNewKeys.Contains(v.DisplayKey));
+        }
+        else
+        {
+            items = _discovered.Values;
+        }
 
         var added = 0;
         foreach (var item in items)
@@ -612,7 +821,20 @@ public sealed class MainForm : Form
     private async Task StartDiscoverWatchAsync()
     {
         if (_discoverCts is not null)
+        {
+            await EnsurePairedTrafficAsync();
             return;
+        }
+
+        ApplyProcessContext(force: false);
+
+        var names = _watchProcesses.Text
+            .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (names.Length == 0)
+        {
+            MessageBox.Show(this, "Enter at least one process name (e.g. Cursor).", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
 
         _discoverCts = new CancellationTokenSource();
         _watchDiscover.Enabled = false;
@@ -629,6 +851,7 @@ public sealed class MainForm : Form
                 {
                     Invoke(() =>
                     {
+                        ApplyProcessContext(force: false);
                         RunDiscovery(autoAdd: _autoAdd.Checked);
                         seconds = (int)_discoverInterval.Value;
                     });
@@ -655,38 +878,18 @@ public sealed class MainForm : Form
         }, token);
 
         AppendLog("DISCOVER watch started.");
-        await Task.CompletedTask;
-    }
-
-    private async Task StopDiscoverWatchAsync()
-    {
-        if (_discoverCts is null)
-            return;
-
-        _discoverCts.Cancel();
-        try
-        {
-            if (_discoverTask is not null)
-                await _discoverTask.ConfigureAwait(true);
-        }
-        catch (OperationCanceledException)
-        {
-            // expected
-        }
-
-        _discoverCts.Dispose();
-        _discoverCts = null;
-        _discoverTask = null;
-        _watchDiscover.Enabled = true;
-        _stopWatchDiscover.Enabled = false;
-        _discoverStatus.Text = "Idle";
-        AppendLog("DISCOVER watch stopped.");
+        await EnsurePairedTrafficAsync();
     }
 
     private async Task StartTrafficMonitorAsync()
     {
         if (_trafficCts is not null)
+        {
+            await EnsurePairedDiscoverAsync();
             return;
+        }
+
+        ApplyProcessContext(force: false);
 
         var names = _watchProcesses.Text
             .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -712,6 +915,7 @@ public sealed class MainForm : Form
                     string[] procs = [];
                     Invoke(() =>
                     {
+                        ApplyProcessContext(force: false);
                         procs = _watchProcesses.Text
                             .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                     });
@@ -747,7 +951,55 @@ public sealed class MainForm : Form
         }, token);
 
         AppendLog("TRAFFIC monitor started (1s samples).");
-        await Task.CompletedTask;
+        await EnsurePairedDiscoverAsync();
+    }
+
+    private async Task EnsurePairedTrafficAsync()
+    {
+        if (_couplingMonitors || _trafficCts is not null) return;
+        _couplingMonitors = true;
+        try { await StartTrafficMonitorAsync(); }
+        finally { _couplingMonitors = false; }
+    }
+
+    private async Task EnsurePairedDiscoverAsync()
+    {
+        if (_couplingMonitors || _discoverCts is not null) return;
+        _couplingMonitors = true;
+        try { await StartDiscoverWatchAsync(); }
+        finally { _couplingMonitors = false; }
+    }
+
+    private async Task StopBothMonitorsAsync()
+    {
+        await StopDiscoverWatchAsync();
+        await StopTrafficMonitorAsync();
+    }
+
+    private async Task StopDiscoverWatchAsync()
+    {
+        if (_discoverCts is null)
+            return;
+
+        _discoverCts.Cancel();
+        try
+        {
+            if (_discoverTask is not null)
+                await _discoverTask.ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            // expected
+        }
+
+        PersistKnownFromUi();
+        _discoverCts.Dispose();
+        _discoverCts = null;
+        _discoverTask = null;
+        _watchDiscover.Enabled = true;
+        _stopWatchDiscover.Enabled = false;
+        _discoverStatus.Text = "Idle";
+        AppendLog("DISCOVER watch stopped.");
     }
 
     private async Task StopTrafficMonitorAsync()
@@ -774,6 +1026,83 @@ public sealed class MainForm : Form
         _trafficStatus.Text = "Idle";
         SaveConfig();
         AppendLog("TRAFFIC monitor stopped.");
+    }
+
+    private void RefreshLogsList()
+    {
+        var selected = _logSessions.SelectedItems.Count > 0
+            ? _logSessions.SelectedItems[0].Tag as string
+            : null;
+
+        _logSessions.BeginUpdate();
+        _logSessions.Items.Clear();
+        foreach (var info in SessionLogStore.ListProcessLogs())
+        {
+            var item = new ListViewItem(info.DisplayName) { Tag = info.ProcessKey };
+            item.SubItems.Add(info.EventCount.ToString());
+            item.SubItems.Add(info.KnownEndpointCount.ToString());
+            item.SubItems.Add(info.LastWriteUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
+            _logSessions.Items.Add(item);
+            if (string.Equals(selected, info.ProcessKey, StringComparison.OrdinalIgnoreCase) ||
+                (selected is null && string.Equals(info.ProcessKey, _sessionLog.ProcessKey, StringComparison.OrdinalIgnoreCase)))
+            {
+                item.Selected = true;
+            }
+        }
+        _logSessions.EndUpdate();
+        if (_logSessions.SelectedItems.Count == 0 && _logSessions.Items.Count > 0)
+            _logSessions.Items[0].Selected = true;
+        else
+            PreviewSelectedLog();
+    }
+
+    private void PreviewSelectedLog()
+    {
+        if (_logSessions.SelectedItems.Count == 0)
+        {
+            _logBrowser.DocumentText = "<html><body style='font-family:Segoe UI;padding:16px;color:#666'>Select a process log.</body></html>";
+            return;
+        }
+
+        var key = _logSessions.SelectedItems[0].Tag as string;
+        if (key is null) return;
+        try
+        {
+            _logBrowser.DocumentText = SessionLogStore.BuildHtmlReport(key);
+        }
+        catch (Exception ex)
+        {
+            _logBrowser.DocumentText = $"<html><body>Failed to render: {System.Net.WebUtility.HtmlEncode(ex.Message)}</body></html>";
+        }
+    }
+
+    private void OpenSelectedLogHtml(bool external)
+    {
+        if (_logSessions.SelectedItems.Count == 0) return;
+        var key = _logSessions.SelectedItems[0].Tag as string;
+        if (key is null) return;
+        try
+        {
+            var path = SessionLogStore.WriteHtmlReport(key);
+            if (external)
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            else
+                _logBrowser.Navigate(path);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Open report", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void OpenSelectedLogFolder()
+    {
+        if (_logSessions.SelectedItems.Count == 0) return;
+        var key = _logSessions.SelectedItems[0].Tag as string;
+        if (key is null) return;
+        var dir = Path.Combine(SessionLogStore.LogsRoot, key);
+        Directory.CreateDirectory(dir);
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dir) { UseShellExecute = true });
     }
 
     private void TogglePinSelected()
@@ -1178,12 +1507,31 @@ public sealed class MainForm : Form
     private void AppendLog(string message)
     {
         _log.AppendText($"{DateTime.Now:HH:mm:ss}  {message}{Environment.NewLine}");
+        try
+        {
+            // Infer a rough category from message prefix
+            var cat = "app";
+            if (message.StartsWith("DISCOVER", StringComparison.OrdinalIgnoreCase)) cat = "discover";
+            else if (message.StartsWith("TRAFFIC", StringComparison.OrdinalIgnoreCase)) cat = "traffic";
+            else if (message.StartsWith("TRACE", StringComparison.OrdinalIgnoreCase)) cat = "trace";
+            else if (message.StartsWith("PROCESS", StringComparison.OrdinalIgnoreCase)) cat = "session";
+            else if (message.StartsWith("FETCH", StringComparison.OrdinalIgnoreCase)) cat = "fetch";
+            else if (message.StartsWith("ROUTE", StringComparison.OrdinalIgnoreCase) ||
+                     message.Contains("ROUTE ", StringComparison.Ordinal)) cat = "route";
+            _sessionLog.Write(cat, message);
+        }
+        catch
+        {
+            // logging must never break UI
+        }
     }
 
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
+            try { PersistKnownFromUi(); } catch { /* ignore */ }
+            _sessionLog.Close();
             _tray.Dispose();
             _loopCts?.Dispose();
             _refreshNowCts?.Dispose();
