@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 
-namespace HostRouteRefresher;
+namespace CopperHead;
 
 public sealed record NetworkAdapterChoice(
     string Name,
@@ -44,7 +44,6 @@ public static class NetworkAdapterEnumerator
             if (ipv4 is null)
                 continue;
 
-            // Prefer IPv4InterfaceIndex when available.
             var index = props.GetIPv4Properties()?.Index ?? 0;
             if (index <= 0)
                 continue;

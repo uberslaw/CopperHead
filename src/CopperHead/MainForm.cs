@@ -1,4 +1,4 @@
-namespace HostRouteRefresher;
+namespace CopperHead;
 
 public sealed class MainForm : Form
 {
@@ -16,13 +16,16 @@ public sealed class MainForm : Form
         Minimum = 5,
         Maximum = 3600,
         Value = 30,
-        Dock = DockStyle.Left,
         Width = 80,
     };
     private readonly Button _refreshAdapters = new() { Text = "Refresh NICs", AutoSize = true };
     private readonly Button _start = new() { Text = "Start", AutoSize = true };
     private readonly Button _stop = new() { Text = "Stop", AutoSize = true, Enabled = false };
+    private readonly Button _applyNow = new() { Text = "Apply now", AutoSize = true };
     private readonly Button _save = new() { Text = "Save config", AutoSize = true };
+    private readonly TextBox _traceTarget = new() { Width = 220, PlaceholderText = "hostname or IP" };
+    private readonly Button _tracert = new() { Text = "Tracert", AutoSize = true };
+    private readonly Button _cancelTrace = new() { Text = "Cancel trace", AutoSize = true, Enabled = false };
     private readonly TextBox _log = new()
     {
         Multiline = true,
@@ -35,22 +38,27 @@ public sealed class MainForm : Form
     private readonly Label _status = new() { Text = "Stopped", AutoSize = true, Padding = new Padding(8, 8, 8, 8) };
     private readonly NotifyIcon _tray;
     private readonly HostRouteService _service = new();
+    private readonly TraceRouteRunner _tracer;
 
     private CancellationTokenSource? _loopCts;
+    private CancellationTokenSource? _refreshNowCts;
+    private CancellationTokenSource? _traceCts;
     private Task? _loopTask;
     private bool _exitAfterStop;
 
     public MainForm()
     {
-        Text = "Host Route Refresher";
-        Width = 780;
-        Height = 640;
-        MinimumSize = new Size(640, 480);
+        _tracer = new TraceRouteRunner(_service.Routes);
+
+        Text = "CopperHead";
+        Width = 860;
+        Height = 720;
+        MinimumSize = new Size(720, 560);
         StartPosition = FormStartPosition.CenterScreen;
 
         _tray = new NotifyIcon
         {
-            Text = "Host Route Refresher",
+            Text = "CopperHead",
             Visible = true,
             Icon = SystemIcons.Shield,
         };
@@ -74,13 +82,14 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 5,
+            RowCount = 6,
             Padding = new Padding(10),
         };
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 35f));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 32f));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 65f));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 68f));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         var adapterRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
@@ -93,7 +102,7 @@ public sealed class MainForm : Form
 
         var hostsLabel = new Label
         {
-            Text = "Hostnames (one per line) — their current A records get /32 routes via the adapter above",
+            Text = "Hostnames (one per line) — editable anytime; Apply now or wait for the next refresh",
             AutoSize = true,
             Padding = new Padding(0, 8, 0, 4),
         };
@@ -105,17 +114,35 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             AutoSize = true,
-            WrapContents = false,
+            WrapContents = true,
             Padding = new Padding(0, 4, 0, 4),
         };
         controls.Controls.Add(new Label { Text = "Refresh every (sec)", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
         controls.Controls.Add(_interval);
         controls.Controls.Add(_start);
         controls.Controls.Add(_stop);
+        controls.Controls.Add(_applyNow);
         controls.Controls.Add(_save);
         controls.Controls.Add(_status);
 
-        var logLabel = new Label { Text = "Log", AutoSize = true, Padding = new Padding(0, 4, 0, 2) };
+        var traceRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            WrapContents = false,
+            Padding = new Padding(0, 2, 0, 6),
+        };
+        traceRow.Controls.Add(new Label { Text = "Tracert target", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
+        traceRow.Controls.Add(_traceTarget);
+        traceRow.Controls.Add(_tracert);
+        traceRow.Controls.Add(_cancelTrace);
+        traceRow.Controls.Add(new Label
+        {
+            Text = "(pins target via selected NIC, then streams tracert -d)",
+            AutoSize = true,
+            ForeColor = Color.DimGray,
+            Padding = new Padding(8, 6, 0, 0),
+        });
 
         root.Controls.Add(adapterRow, 0, 0);
 
@@ -127,51 +154,53 @@ public sealed class MainForm : Form
         root.Controls.Add(mid, 0, 1);
 
         root.Controls.Add(controls, 0, 2);
+        root.Controls.Add(traceRow, 0, 3);
 
         var logPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
         logPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         logPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-        logPanel.Controls.Add(logLabel, 0, 0);
+        logPanel.Controls.Add(new Label { Text = "Log / tracert", AutoSize = true, Padding = new Padding(0, 4, 0, 2) }, 0, 0);
         logPanel.Controls.Add(_log, 0, 1);
-        root.Controls.Add(logPanel, 0, 3);
+        root.Controls.Add(logPanel, 0, 4);
 
         root.Controls.Add(new Label
         {
-            Text = "Requires Administrator. Only manages routes it creates. Stop clears them. No DLL injection.",
+            Text = "CopperHead · Admin required · Only manages routes it creates · Stop clears them",
             AutoSize = true,
             ForeColor = Color.DimGray,
             Padding = new Padding(0, 6, 0, 0),
-        }, 0, 4);
+        }, 0, 5);
 
         Controls.Add(root);
 
         _service.Log += msg =>
         {
             if (IsDisposed) return;
-            BeginInvoke(() =>
-            {
-                _log.AppendText(msg + Environment.NewLine);
-            });
+            BeginInvoke(() => _log.AppendText(msg + Environment.NewLine));
         };
 
         _refreshAdapters.Click += (_, _) => LoadAdapters();
         _start.Click += async (_, _) => await StartAsync();
         _stop.Click += async (_, _) => await StopAsync();
+        _applyNow.Click += async (_, _) => await ApplyNowAsync();
         _save.Click += (_, _) => SaveConfig();
+        _tracert.Click += async (_, _) => await RunTraceAsync();
+        _cancelTrace.Click += (_, _) => _traceCts?.Cancel();
 
         Load += (_, _) =>
         {
             LoadAdapters();
             ApplyConfig(AppConfig.LoadOrDefault());
-            AppendLog("Ready. Pick your phone-tether adapter, add hostnames, Start.");
+            AppendLog("CopperHead ready. Pick tether adapter, edit hostnames, Start. Use Tracert to verify path.");
         };
 
         FormClosing += async (_, e) =>
         {
-            if (_loopCts is not null && !_exitAfterStop)
+            if ((_loopCts is not null || _traceCts is not null) && !_exitAfterStop)
             {
                 e.Cancel = true;
                 _exitAfterStop = true;
+                _traceCts?.Cancel();
                 await StopAsync();
                 _tray.Visible = false;
                 Close();
@@ -225,6 +254,8 @@ public sealed class MainForm : Form
     {
         _hosts.Text = string.Join(Environment.NewLine, config.Hostnames);
         _interval.Value = Math.Clamp(config.RefreshSeconds, 5, 3600);
+        if (!string.IsNullOrWhiteSpace(config.LastTraceTarget))
+            _traceTarget.Text = config.LastTraceTarget;
 
         if (!string.IsNullOrWhiteSpace(config.AdapterName))
         {
@@ -252,6 +283,7 @@ public sealed class MainForm : Form
             AdapterName = adapter?.Name,
             Gateway = adapter?.Gateway.ToString(),
             RefreshSeconds = (int)_interval.Value,
+            LastTraceTarget = _traceTarget.Text.Trim(),
         };
     }
 
@@ -260,6 +292,45 @@ public sealed class MainForm : Form
         var cfg = CaptureConfig();
         cfg.Save();
         AppendLog($"Saved {AppConfig.DefaultPath}");
+    }
+
+    private async Task ApplyNowAsync()
+    {
+        if (_adapters.SelectedItem is not NetworkAdapterChoice adapter)
+        {
+            MessageBox.Show(this, "Select an egress adapter first.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var hosts = CaptureConfig().Hostnames.Where(h => !h.StartsWith('#')).ToList();
+        if (hosts.Count == 0)
+        {
+            MessageBox.Show(this, "Add at least one hostname.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        _refreshNowCts?.Cancel();
+        _refreshNowCts = new CancellationTokenSource();
+        var token = _refreshNowCts.Token;
+        _applyNow.Enabled = false;
+        try
+        {
+            AppendLog("Applying hostname list now…");
+            await _service.RefreshAsync(hosts, adapter, token).ConfigureAwait(true);
+            SaveConfig();
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog("Apply cancelled.");
+        }
+        catch (Exception ex)
+        {
+            AppendLog("ERROR " + ex.Message);
+        }
+        finally
+        {
+            _applyNow.Enabled = true;
+        }
     }
 
     private async Task StartAsync()
@@ -284,38 +355,32 @@ public sealed class MainForm : Form
         _loopCts = new CancellationTokenSource();
         _start.Enabled = false;
         _stop.Enabled = true;
-        _hosts.ReadOnly = true;
-        _adapters.Enabled = false;
-        _interval.Enabled = false;
+        // Hostnames stay editable so you can add domains on the fly.
         _status.Text = "Running";
-        _tray.Text = "Host Route Refresher (running)";
+        _tray.Text = "CopperHead (running)";
 
         var token = _loopCts.Token;
-        var seconds = (int)_interval.Value;
         _loopTask = Task.Run(async () =>
         {
             while (!token.IsCancellationRequested)
             {
+                int seconds = 30;
                 try
                 {
-                    // Re-read adapter each cycle — tether IF/gateway can change.
                     NetworkAdapterChoice? adapter = null;
+                    string[] hostList = [];
                     Invoke(() =>
                     {
                         LoadAdapters(preserveSelectionOnly: true);
                         adapter = _adapters.SelectedItem as NetworkAdapterChoice;
+                        hostList = CaptureConfig().Hostnames.ToArray();
+                        seconds = (int)_interval.Value;
                     });
 
                     if (adapter is null)
-                    {
                         _service.WriteLog("WARN  selected adapter missing; waiting…");
-                    }
                     else
-                    {
-                        var hostList = Array.Empty<string>();
-                        Invoke(() => hostList = CaptureConfig().Hostnames.ToArray());
                         await _service.RefreshAsync(hostList, adapter, token).ConfigureAwait(false);
-                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -337,7 +402,7 @@ public sealed class MainForm : Form
             }
         }, token);
 
-        AppendLog("Started.");
+        AppendLog("Started — edit hostnames anytime; Apply now for immediate update.");
         await Task.CompletedTask;
     }
 
@@ -389,6 +454,7 @@ public sealed class MainForm : Form
             return;
 
         _loopCts.Cancel();
+        _refreshNowCts?.Cancel();
         try
         {
             if (_loopTask is not null)
@@ -414,12 +480,66 @@ public sealed class MainForm : Form
 
         _start.Enabled = true;
         _stop.Enabled = false;
-        _hosts.ReadOnly = false;
-        _adapters.Enabled = true;
-        _interval.Enabled = true;
         _status.Text = "Stopped";
-        _tray.Text = "Host Route Refresher";
+        _tray.Text = "CopperHead";
         AppendLog("Stopped.");
+    }
+
+    private async Task RunTraceAsync()
+    {
+        if (_adapters.SelectedItem is not NetworkAdapterChoice adapter)
+        {
+            MessageBox.Show(this, "Select an egress adapter first.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var target = _traceTarget.Text.Trim();
+        if (target.Length == 0)
+        {
+            // Convenience: use first hostname in the list
+            target = CaptureConfig().Hostnames.FirstOrDefault(h => !h.StartsWith('#')) ?? "";
+            _traceTarget.Text = target;
+        }
+
+        if (target.Length == 0)
+        {
+            MessageBox.Show(this, "Enter a hostname or IP to trace.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        _traceCts?.Cancel();
+        _traceCts = new CancellationTokenSource();
+        var token = _traceCts.Token;
+
+        _tracert.Enabled = false;
+        _cancelTrace.Enabled = true;
+        SaveConfig();
+
+        try
+        {
+            await _tracer.RunAsync(
+                target,
+                adapter,
+                line =>
+                {
+                    if (IsDisposed) return;
+                    BeginInvoke(() => _log.AppendText($"{DateTime.Now:HH:mm:ss}  {line}{Environment.NewLine}"));
+                },
+                token).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog("Tracert cancelled.");
+        }
+        catch (Exception ex)
+        {
+            AppendLog("TRACE ERROR " + ex.Message);
+        }
+        finally
+        {
+            _tracert.Enabled = true;
+            _cancelTrace.Enabled = false;
+        }
     }
 
     private void AppendLog(string message)
@@ -433,6 +553,8 @@ public sealed class MainForm : Form
         {
             _tray.Dispose();
             _loopCts?.Dispose();
+            _refreshNowCts?.Dispose();
+            _traceCts?.Dispose();
         }
         base.Dispose(disposing);
     }

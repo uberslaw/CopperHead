@@ -5,5 +5,6 @@
   ],
   "AdapterName": null,
   "Gateway": null,
-  "RefreshSeconds": 30
+  "RefreshSeconds": 30,
+  "LastTraceTarget": "api2.cursor.sh"
 }

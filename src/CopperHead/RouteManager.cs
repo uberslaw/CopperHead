@@ -2,11 +2,10 @@ using System.Diagnostics;
 using System.Net;
 using System.Text;
 
-namespace HostRouteRefresher;
+namespace CopperHead;
 
 /// <summary>
 /// Adds/removes host (/32) routes using the built-in Windows route.exe.
-/// No injection, no packet divert — just standard routing-table updates.
 /// </summary>
 public sealed class RouteManager
 {
@@ -24,7 +23,6 @@ public sealed class RouteManager
             throw new ArgumentException("Only IPv4 host routes are supported.", nameof(destination));
 
         var dest = destination.ToString();
-        // Replace any existing route for this host (may point at old gateway/IF).
         DeleteHostRoute(destination, forget: false);
 
         var args = $"add {dest} mask 255.255.255.255 {gateway} METRIC {metric} IF {interfaceIndex}";
@@ -52,9 +50,7 @@ public sealed class RouteManager
             snapshot = _managed.ToList();
 
         foreach (var dest in snapshot)
-        {
             RunRoute($"delete {dest}", treatAlreadyExistsAsSuccess: true);
-        }
 
         lock (_gate)
             _managed.Clear();

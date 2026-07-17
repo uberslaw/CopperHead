@@ -1,7 +1,7 @@
 # AmplifyApp
 
-## Host Route Refresher
+## CopperHead
 
-Windows utility under [`src/HostRouteRefresher`](src/HostRouteRefresher) that periodically resolves hostnames and updates `/32` routes so selected destinations egress via a chosen adapter (e.g. phone tether).
+Windows utility under [`src/CopperHead`](src/CopperHead) that periodically resolves hostnames and updates `/32` routes so selected destinations egress via a chosen adapter (e.g. phone tether).
 
-See [`src/HostRouteRefresher/README.md`](src/HostRouteRefresher/README.md) for build and usage.
+See [`src/CopperHead/README.md`](src/CopperHead/README.md) for build and usage.

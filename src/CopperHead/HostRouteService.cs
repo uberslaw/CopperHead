@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
 
-namespace HostRouteRefresher;
+namespace CopperHead;
 
 public sealed class AppConfig
 {
@@ -10,6 +10,7 @@ public sealed class AppConfig
     public string? AdapterName { get; set; }
     public string? Gateway { get; set; }
     public int RefreshSeconds { get; set; } = 30;
+    public string? LastTraceTarget { get; set; }
 
     public static string DefaultPath =>
         Path.Combine(AppContext.BaseDirectory, "config.json");
@@ -27,6 +28,7 @@ public sealed class AppConfig
                     "api5.cursor.sh",
                 ],
                 RefreshSeconds = 30,
+                LastTraceTarget = "api2.cursor.sh",
             };
         }
 
@@ -46,6 +48,8 @@ public sealed class HostRouteService
 {
     private readonly RouteManager _routes = new();
     private readonly Dictionary<string, HashSet<string>> _hostToIps = new(StringComparer.OrdinalIgnoreCase);
+
+    public RouteManager Routes => _routes;
 
     public event Action<string>? Log;
 
@@ -88,7 +92,6 @@ public sealed class HostRouteService
             }
         }
 
-        // Drop routes we previously managed that are no longer needed.
         foreach (var existing in _routes.ManagedDestinations.ToList())
         {
             if (desiredIps.Contains(existing))
@@ -98,7 +101,6 @@ public sealed class HostRouteService
             Write($"DEL   {existing}/32 (stale)");
         }
 
-        // Clean host map for removed hostnames
         foreach (var key in _hostToIps.Keys.Except(desiredHosts, StringComparer.OrdinalIgnoreCase).ToList())
             _hostToIps.Remove(key);
     }
@@ -110,7 +112,7 @@ public sealed class HostRouteService
         Write("Cleared managed routes.");
     }
 
-    private static async Task<List<IPAddress>> ResolveIpv4Async(string hostname, CancellationToken ct)
+    public static async Task<List<IPAddress>> ResolveIpv4Async(string hostname, CancellationToken ct)
     {
         try
         {
