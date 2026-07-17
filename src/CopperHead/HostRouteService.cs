@@ -16,7 +16,7 @@ public sealed class AppConfig
     public bool AutoAddDiscoveries { get; set; }
     public int DiscoverSeconds { get; set; } = 15;
     public List<string> PinnedTrafficKeys { get; set; } = new();
-    public int TrafficSortColumn { get; set; } = 4; // TX/s default
+    public int TrafficSortColumn { get; set; } = 8; // All time TX default (desc)
     public bool TrafficSortAsc { get; set; }
 
     public static string DefaultPath =>

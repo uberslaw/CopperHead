@@ -68,8 +68,8 @@ public sealed class MainForm : Form
     private readonly TrafficMonitor _traffic;
     private readonly Dictionary<string, DiscoveredEndpoint> _discovered = new(StringComparer.OrdinalIgnoreCase);
     private List<TrafficRow> _trafficRows = [];
-    private int _trafficSortColumn = 4;
-    private bool _trafficSortAsc;
+    private int _trafficSortColumn = 8; // All time TX
+    private bool _trafficSortAsc; // false = descending
 
     private CancellationTokenSource? _loopCts;
     private CancellationTokenSource? _refreshNowCts;
@@ -311,14 +311,49 @@ public sealed class MainForm : Form
 
     private void InitTrafficList()
     {
-        _trafficList.Columns.Add("★", 36);
-        _trafficList.Columns.Add("IP", 140);
-        _trafficList.Columns.Add("Port", 60);
-        _trafficList.Columns.Add("Host", 160);
-        _trafficList.Columns.Add("TX/s", 90);
-        _trafficList.Columns.Add("RX/s", 90);
-        _trafficList.Columns.Add("This session", 130);
-        _trafficList.Columns.Add("All time", 130);
+        _trafficList.OwnerDraw = true;
+        _trafficList.Columns.Add(CenterCol("★", 36));
+        _trafficList.Columns.Add(CenterCol("IP", 120));
+        _trafficList.Columns.Add(CenterCol("Port", 55));
+        _trafficList.Columns.Add(CenterCol("Host", 140));
+        _trafficList.Columns.Add(CenterCol("TX/s", 80));
+        _trafficList.Columns.Add(CenterCol("RX/s", 80));
+        _trafficList.Columns.Add(CenterCol("Session TX", 90));
+        _trafficList.Columns.Add(CenterCol("Session RX", 90));
+        _trafficList.Columns.Add(CenterCol("All time TX", 90));
+        _trafficList.Columns.Add(CenterCol("All time RX", 90));
+
+        _trafficList.DrawColumnHeader += (_, e) =>
+        {
+            e.DrawBackground();
+            TextRenderer.DrawText(
+                e.Graphics,
+                e.Header!.Text,
+                e.Font,
+                e.Bounds,
+                e.ForeColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            e.DrawDefault = false;
+        };
+        _trafficList.DrawItem += (_, e) => { e.DrawDefault = false; };
+        _trafficList.DrawSubItem += (_, e) =>
+        {
+            var selected = e.Item!.Selected;
+            var bg = selected ? SystemColors.Highlight : e.Item.BackColor;
+            var fg = selected ? SystemColors.HighlightText : e.Item.ForeColor;
+            using (var brush = new SolidBrush(bg))
+                e.Graphics!.FillRectangle(brush, e.Bounds);
+
+            var font = e.Item.Font ?? _trafficList.Font;
+            TextRenderer.DrawText(
+                e.Graphics,
+                e.SubItem?.Text ?? "",
+                font,
+                e.Bounds,
+                fg,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        };
+
         _trafficList.ColumnClick += (_, e) =>
         {
             if (_trafficSortColumn == e.Column)
@@ -326,13 +361,17 @@ public sealed class MainForm : Form
             else
             {
                 _trafficSortColumn = e.Column;
-                _trafficSortAsc = e.Column is 1 or 2 or 3; // text cols asc first
+                // Text columns start ascending; numeric/rates/totals start descending
+                _trafficSortAsc = e.Column is 1 or 2 or 3;
             }
             RefreshTrafficList();
             SaveConfig();
         };
         _trafficList.DoubleClick += (_, _) => TogglePinSelected();
     }
+
+    private static ColumnHeader CenterCol(string text, int width) =>
+        new() { Text = text, Width = width, TextAlign = HorizontalAlignment.Center };
 
     private TabPage BuildTrafficTab()
     {
@@ -436,7 +475,17 @@ public sealed class MainForm : Form
         _autoAdd.Checked = config.AutoAddDiscoveries;
         _discoverInterval.Value = Math.Clamp(config.DiscoverSeconds <= 0 ? 15 : config.DiscoverSeconds, 5, 600);
         _traffic.SetPinned(config.PinnedTrafficKeys ?? []);
-        _trafficSortColumn = config.TrafficSortColumn;
+        // Migrate old combined-column indexes / default to All time TX desc
+        _trafficSortColumn = config.TrafficSortColumn is >= 0 and <= 9
+            ? config.TrafficSortColumn
+            : 8;
+        if (config.TrafficSortColumn is 6 or 7 && config.TrafficSortAsc == false &&
+            config.PinnedTrafficKeys is not null)
+        {
+            // Older builds used 6/7 as combined session/all-time — prefer All time TX
+            if (config.TrafficSortColumn == 7)
+                _trafficSortColumn = 8;
+        }
         _trafficSortAsc = config.TrafficSortAsc;
 
         if (!string.IsNullOrWhiteSpace(config.AdapterName))
@@ -764,19 +813,21 @@ public sealed class MainForm : Form
         _trafficList.Items.Clear();
         foreach (var row in sorted)
         {
-            var ipText = row.Hostname is null ? row.Ip : row.Ip;
             var item = new ListViewItem(row.Pinned ? "★" : "")
             {
                 Tag = row.Key,
                 ForeColor = row.Active ? SystemColors.WindowText : Color.Gray,
+                UseItemStyleForSubItems = true,
             };
-            item.SubItems.Add(ipText);
+            item.SubItems.Add(row.Ip);
             item.SubItems.Add(row.Port.ToString());
             item.SubItems.Add(row.Hostname ?? "");
             item.SubItems.Add(FormatRate(row.TxPerSec));
             item.SubItems.Add(FormatRate(row.RxPerSec));
-            item.SubItems.Add(FormatPair(row.SessionTx, row.SessionRx));
-            item.SubItems.Add(FormatPair(row.AllTimeTx, row.AllTimeRx));
+            item.SubItems.Add(FormatBytes(row.SessionTx));
+            item.SubItems.Add(FormatBytes(row.SessionRx));
+            item.SubItems.Add(FormatBytes(row.AllTimeTx));
+            item.SubItems.Add(FormatBytes(row.AllTimeRx));
             if (row.Pinned)
                 item.Font = new Font(_trafficList.Font, FontStyle.Bold);
             _trafficList.Items.Add(item);
@@ -812,12 +863,18 @@ public sealed class MainForm : Form
                 ? ordered.ThenBy(r => r.RxPerSec)
                 : ordered.ThenByDescending(r => r.RxPerSec),
             6 => _trafficSortAsc
-                ? ordered.ThenBy(r => r.SessionTx + r.SessionRx)
-                : ordered.ThenByDescending(r => r.SessionTx + r.SessionRx),
+                ? ordered.ThenBy(r => r.SessionTx)
+                : ordered.ThenByDescending(r => r.SessionTx),
             7 => _trafficSortAsc
-                ? ordered.ThenBy(r => r.AllTimeTx + r.AllTimeRx)
-                : ordered.ThenByDescending(r => r.AllTimeTx + r.AllTimeRx),
-            _ => ordered.ThenByDescending(r => r.TxPerSec),
+                ? ordered.ThenBy(r => r.SessionRx)
+                : ordered.ThenByDescending(r => r.SessionRx),
+            8 => _trafficSortAsc
+                ? ordered.ThenBy(r => r.AllTimeTx)
+                : ordered.ThenByDescending(r => r.AllTimeTx),
+            9 => _trafficSortAsc
+                ? ordered.ThenBy(r => r.AllTimeRx)
+                : ordered.ThenByDescending(r => r.AllTimeRx),
+            _ => ordered.ThenByDescending(r => r.AllTimeTx),
         };
 
         return ordered;
@@ -828,9 +885,6 @@ public sealed class MainForm : Form
         if (bytesPerSec < 1) return "0";
         return FormatBytes((ulong)bytesPerSec) + "/s";
     }
-
-    private static string FormatPair(ulong tx, ulong rx) =>
-        $"↑{FormatBytes(tx)}  ↓{FormatBytes(rx)}";
 
     private static string FormatBytes(ulong bytes)
     {
