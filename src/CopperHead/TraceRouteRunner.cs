@@ -67,17 +67,22 @@ public sealed class TraceRouteRunner
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start tracert.exe");
 
-        var stdoutTask = Task.Run(async () =>
+        // Kill immediately when Stop is clicked (don't wait for WaitForExit).
+        await using var killReg = cancellationToken.Register(() =>
         {
-            while (await proc.StandardOutput.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
-                write(line);
-        }, cancellationToken);
+            try
+            {
+                if (!proc.HasExited)
+                    proc.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // ignore
+            }
+        });
 
-        var stderrTask = Task.Run(async () =>
-        {
-            while (await proc.StandardError.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
-                write("ERR  " + line);
-        }, cancellationToken);
+        var stdoutTask = Task.Run(() => DrainLines(proc.StandardOutput, write), CancellationToken.None);
+        var stderrTask = Task.Run(() => DrainLines(proc.StandardError, line => write("ERR  " + line)), CancellationToken.None);
 
         try
         {
@@ -95,11 +100,30 @@ public sealed class TraceRouteRunner
                 // ignore
             }
 
-            write("TRACE cancelled.");
+            write("TRACE stopped.");
             throw;
         }
+        finally
+        {
+            // Ensure readers finish after process death.
+            try { await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false); }
+            catch { /* ignore */ }
+        }
 
-        await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
         write($"----- done (exit {proc.ExitCode}) -----");
+    }
+
+    private static void DrainLines(StreamReader reader, Action<string> write)
+    {
+        try
+        {
+            string? line;
+            while ((line = reader.ReadLine()) is not null)
+                write(line);
+        }
+        catch
+        {
+            // process killed / stream closed
+        }
     }
 }

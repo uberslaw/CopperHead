@@ -19,7 +19,7 @@ public sealed class MainForm : Form
     private readonly Button _save = new() { Text = "Save config", AutoSize = true };
     private readonly TextBox _traceTarget = new() { Width = 220, PlaceholderText = "hostname or IP" };
     private readonly Button _tracert = new() { Text = "Tracert", AutoSize = true };
-    private readonly Button _cancelTrace = new() { Text = "Cancel trace", AutoSize = true, Enabled = false };
+    private readonly Button _cancelTrace = new() { Text = "Stop tracert", AutoSize = true, Enabled = false };
     private readonly TextBox _log = new()
     {
         Multiline = true,
