@@ -6,7 +6,8 @@ Windows utility that periodically resolves hostnames and updates `/32` routes so
 
 | Path | Description |
 |---|---|
-| [`src/CopperHead`](src/CopperHead) | WinForms app — hostname list, route refresh, tracert, tray icon |
+| [`src/CopperHead`](src/CopperHead) | WinForms app — hostname list, route refresh, tracert, discovery, tray icon |
+| [`docs/hosts-cursor.txt`](docs/hosts-cursor.txt) | Optional shared Cursor hostname list for **Fetch list** |
 
 See [`src/CopperHead/README.md`](src/CopperHead/README.md) for build and usage.
 

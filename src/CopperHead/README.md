@@ -8,8 +8,14 @@ Windows admin utility that keeps **/32 host routes** pointed at a chosen NIC (fo
 - **Apply now** — refresh routes immediately after editing domains
 - Periodic DNS refresh
 - **Tracert** — pins the target via the selected NIC, then streams live `tracert -d` output (first hop should be your tether gateway)
+- **Discover** tab — watch process TCP connections + DNS cache (no injection); add hosts/IPs to the route list
+- **Fetch list** — pull a shared hostname file from a raw git URL and merge
 - Custom CopperHead tray / window icon (`Assets/copperhead.ico`)
 - Stop clears only routes CopperHead created
+
+## Shared host list (optional)
+
+A starter Cursor list lives at [`docs/hosts-cursor.txt`](../../docs/hosts-cursor.txt). After push, point **Host list URL** at the raw GitHub URL for that file (or your own fork/repo).
 
 ## Build (Windows)
 

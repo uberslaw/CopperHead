@@ -11,6 +11,10 @@ public sealed class AppConfig
     public string? Gateway { get; set; }
     public int RefreshSeconds { get; set; } = 30;
     public string? LastTraceTarget { get; set; }
+    public string WatchProcesses { get; set; } = "Cursor";
+    public string? HostListUrl { get; set; }
+    public bool AutoAddDiscoveries { get; set; }
+    public int DiscoverSeconds { get; set; } = 15;
 
     public static string DefaultPath =>
         Path.Combine(AppContext.BaseDirectory, "config.json");
@@ -29,6 +33,9 @@ public sealed class AppConfig
                 ],
                 RefreshSeconds = 30,
                 LastTraceTarget = "api2.cursor.sh",
+                WatchProcesses = "Cursor",
+                HostListUrl = "https://raw.githubusercontent.com/uberslaw/CopperHead/cursor/hostname-route-refresher-4c5d/docs/hosts-cursor.txt",
+                DiscoverSeconds = 15,
             };
         }
 

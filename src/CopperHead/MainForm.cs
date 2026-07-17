@@ -11,13 +11,7 @@ public sealed class MainForm : Form
         Font = new Font("Consolas", 10f),
         AcceptsReturn = true,
     };
-    private readonly NumericUpDown _interval = new()
-    {
-        Minimum = 5,
-        Maximum = 3600,
-        Value = 30,
-        Width = 80,
-    };
+    private readonly NumericUpDown _interval = new() { Minimum = 5, Maximum = 3600, Value = 30, Width = 80 };
     private readonly Button _refreshAdapters = new() { Text = "Refresh NICs", AutoSize = true };
     private readonly Button _start = new() { Text = "Start", AutoSize = true };
     private readonly Button _stop = new() { Text = "Stop", AutoSize = true, Enabled = false };
@@ -36,14 +30,32 @@ public sealed class MainForm : Form
         WordWrap = false,
     };
     private readonly Label _status = new() { Text = "Stopped", AutoSize = true, Padding = new Padding(8, 8, 8, 8) };
+
+    // Discover tab
+    private readonly TextBox _watchProcesses = new() { Dock = DockStyle.Fill, PlaceholderText = "Cursor, MyLicenseApp" };
+    private readonly ListBox _discoveries = new() { Dock = DockStyle.Fill, IntegralHeight = false, SelectionMode = SelectionMode.MultiExtended };
+    private readonly Button _scanNow = new() { Text = "Scan now", AutoSize = true };
+    private readonly Button _watchDiscover = new() { Text = "Watch", AutoSize = true };
+    private readonly Button _stopWatchDiscover = new() { Text = "Stop watch", AutoSize = true, Enabled = false };
+    private readonly Button _addSelected = new() { Text = "Add selected to hosts", AutoSize = true };
+    private readonly Button _addAll = new() { Text = "Add all to hosts", AutoSize = true };
+    private readonly CheckBox _autoAdd = new() { Text = "Auto-add new discoveries", AutoSize = true };
+    private readonly NumericUpDown _discoverInterval = new() { Minimum = 5, Maximum = 600, Value = 15, Width = 70 };
+    private readonly TextBox _hostListUrl = new() { Dock = DockStyle.Fill, PlaceholderText = "https://raw.githubusercontent.com/.../hosts.txt" };
+    private readonly Button _fetchList = new() { Text = "Fetch list", AutoSize = true };
+    private readonly Label _discoverStatus = new() { Text = "Idle", AutoSize = true, Padding = new Padding(8, 6, 0, 0) };
+
     private readonly NotifyIcon _tray;
     private readonly HostRouteService _service = new();
     private readonly TraceRouteRunner _tracer;
+    private readonly Dictionary<string, DiscoveredEndpoint> _discovered = new(StringComparer.OrdinalIgnoreCase);
 
     private CancellationTokenSource? _loopCts;
     private CancellationTokenSource? _refreshNowCts;
     private CancellationTokenSource? _traceCts;
+    private CancellationTokenSource? _discoverCts;
     private Task? _loopTask;
+    private Task? _discoverTask;
     private bool _exitAfterStop;
 
     public MainForm()
@@ -51,9 +63,9 @@ public sealed class MainForm : Form
         _tracer = new TraceRouteRunner(_service.Routes);
 
         Text = "CopperHead";
-        Width = 860;
-        Height = 720;
-        MinimumSize = new Size(720, 560);
+        Width = 920;
+        Height = 760;
+        MinimumSize = new Size(760, 600);
         StartPosition = FormStartPosition.CenterScreen;
         Icon = AppIcons.AppIcon;
 
@@ -75,104 +87,26 @@ public sealed class MainForm : Form
         trayMenu.Items.Add("Stop & Exit", null, async (_, _) =>
         {
             await StopAsync();
+            await StopDiscoverWatchAsync();
             Close();
         });
         _tray.ContextMenuStrip = trayMenu;
 
-        var root = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 6,
-            Padding = new Padding(10),
-        };
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 32f));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 68f));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var tabs = new TabControl { Dock = DockStyle.Fill };
+        tabs.TabPages.Add(BuildRoutesTab());
+        tabs.TabPages.Add(BuildDiscoverTab());
 
-        var adapterRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
-        adapterRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
-        adapterRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-        adapterRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        adapterRow.Controls.Add(new Label { Text = "Egress adapter", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        adapterRow.Controls.Add(_adapters, 1, 0);
-        adapterRow.Controls.Add(_refreshAdapters, 2, 0);
-
-        var hostsLabel = new Label
+        var footer = new Label
         {
-            Text = "Hostnames (one per line) — editable anytime; Apply now or wait for the next refresh",
-            AutoSize = true,
-            Padding = new Padding(0, 8, 0, 4),
-        };
-
-        var hostsPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 0, 0, 4) };
-        hostsPanel.Controls.Add(_hosts);
-
-        var controls = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            AutoSize = true,
-            WrapContents = true,
-            Padding = new Padding(0, 4, 0, 4),
-        };
-        controls.Controls.Add(new Label { Text = "Refresh every (sec)", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
-        controls.Controls.Add(_interval);
-        controls.Controls.Add(_start);
-        controls.Controls.Add(_stop);
-        controls.Controls.Add(_applyNow);
-        controls.Controls.Add(_save);
-        controls.Controls.Add(_status);
-
-        var traceRow = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            AutoSize = true,
-            WrapContents = false,
-            Padding = new Padding(0, 2, 0, 6),
-        };
-        traceRow.Controls.Add(new Label { Text = "Tracert target", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
-        traceRow.Controls.Add(_traceTarget);
-        traceRow.Controls.Add(_tracert);
-        traceRow.Controls.Add(_cancelTrace);
-        traceRow.Controls.Add(new Label
-        {
-            Text = "(pins target via selected NIC, then streams tracert -d)",
-            AutoSize = true,
+            Dock = DockStyle.Bottom,
+            Height = 28,
+            Text = "CopperHead · Admin required · Discovery uses TCP table + DNS cache (no injection) · Stop clears managed routes",
             ForeColor = Color.DimGray,
-            Padding = new Padding(8, 6, 0, 0),
-        });
+            Padding = new Padding(10, 6, 10, 0),
+        };
 
-        root.Controls.Add(adapterRow, 0, 0);
-
-        var mid = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-        mid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        mid.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-        mid.Controls.Add(hostsLabel, 0, 0);
-        mid.Controls.Add(hostsPanel, 0, 1);
-        root.Controls.Add(mid, 0, 1);
-
-        root.Controls.Add(controls, 0, 2);
-        root.Controls.Add(traceRow, 0, 3);
-
-        var logPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-        logPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        logPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-        logPanel.Controls.Add(new Label { Text = "Log / tracert", AutoSize = true, Padding = new Padding(0, 4, 0, 2) }, 0, 0);
-        logPanel.Controls.Add(_log, 0, 1);
-        root.Controls.Add(logPanel, 0, 4);
-
-        root.Controls.Add(new Label
-        {
-            Text = "CopperHead · Admin required · Only manages routes it creates · Stop clears them",
-            AutoSize = true,
-            ForeColor = Color.DimGray,
-            Padding = new Padding(0, 6, 0, 0),
-        }, 0, 5);
-
-        Controls.Add(root);
+        Controls.Add(tabs);
+        Controls.Add(footer);
 
         _service.Log += msg =>
         {
@@ -180,28 +114,23 @@ public sealed class MainForm : Form
             BeginInvoke(() => _log.AppendText(msg + Environment.NewLine));
         };
 
-        _refreshAdapters.Click += (_, _) => LoadAdapters();
-        _start.Click += async (_, _) => await StartAsync();
-        _stop.Click += async (_, _) => await StopAsync();
-        _applyNow.Click += async (_, _) => await ApplyNowAsync();
-        _save.Click += (_, _) => SaveConfig();
-        _tracert.Click += async (_, _) => await RunTraceAsync();
-        _cancelTrace.Click += (_, _) => _traceCts?.Cancel();
+        WireEvents();
 
         Load += (_, _) =>
         {
             LoadAdapters();
             ApplyConfig(AppConfig.LoadOrDefault());
-            AppendLog("CopperHead ready. Pick tether adapter, edit hostnames, Start. Use Tracert to verify path.");
+            AppendLog("CopperHead ready. Routes tab for tether routing; Discover tab to find hosts or pull a git-hosted list.");
         };
 
         FormClosing += async (_, e) =>
         {
-            if ((_loopCts is not null || _traceCts is not null) && !_exitAfterStop)
+            if ((_loopCts is not null || _traceCts is not null || _discoverCts is not null) && !_exitAfterStop)
             {
                 e.Cancel = true;
                 _exitAfterStop = true;
                 _traceCts?.Cancel();
+                await StopDiscoverWatchAsync();
                 await StopAsync();
                 _tray.Visible = false;
                 Close();
@@ -219,6 +148,153 @@ public sealed class MainForm : Form
                 _tray.ShowBalloonTip(1500, Text, "Still running in the tray.", ToolTipIcon.Info);
             }
         };
+    }
+
+    private TabPage BuildRoutesTab()
+    {
+        var page = new TabPage("Routes");
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 5,
+            Padding = new Padding(10),
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 35f));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 65f));
+
+        var adapterRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
+        adapterRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        adapterRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        adapterRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        adapterRow.Controls.Add(new Label { Text = "Egress adapter", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        adapterRow.Controls.Add(_adapters, 1, 0);
+        adapterRow.Controls.Add(_refreshAdapters, 2, 0);
+
+        var mid = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        mid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        mid.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        mid.Controls.Add(new Label
+        {
+            Text = "Hostnames / IPs (one per line) — editable anytime; Apply now or wait for refresh",
+            AutoSize = true,
+            Padding = new Padding(0, 8, 0, 4),
+        }, 0, 0);
+        mid.Controls.Add(_hosts, 0, 1);
+
+        var controls = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Padding = new Padding(0, 4, 0, 4) };
+        controls.Controls.Add(new Label { Text = "Refresh every (sec)", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
+        controls.Controls.Add(_interval);
+        controls.Controls.Add(_start);
+        controls.Controls.Add(_stop);
+        controls.Controls.Add(_applyNow);
+        controls.Controls.Add(_save);
+        controls.Controls.Add(_status);
+
+        var traceRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false, Padding = new Padding(0, 2, 0, 6) };
+        traceRow.Controls.Add(new Label { Text = "Tracert target", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
+        traceRow.Controls.Add(_traceTarget);
+        traceRow.Controls.Add(_tracert);
+        traceRow.Controls.Add(_cancelTrace);
+
+        var logPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        logPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        logPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        logPanel.Controls.Add(new Label { Text = "Log / tracert", AutoSize = true, Padding = new Padding(0, 4, 0, 2) }, 0, 0);
+        logPanel.Controls.Add(_log, 0, 1);
+
+        root.Controls.Add(adapterRow, 0, 0);
+        root.Controls.Add(mid, 0, 1);
+        root.Controls.Add(controls, 0, 2);
+        root.Controls.Add(traceRow, 0, 3);
+        root.Controls.Add(logPanel, 0, 4);
+        page.Controls.Add(root);
+        return page;
+    }
+
+    private TabPage BuildDiscoverTab()
+    {
+        var page = new TabPage("Discover");
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 6,
+            Padding = new Padding(10),
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        root.Controls.Add(new Label
+        {
+            Text = "Watch process names (comma-separated, no .exe needed). Uses TCP table + DNS cache — no packet capture.",
+            AutoSize = true,
+            Padding = new Padding(0, 0, 0, 4),
+        }, 0, 0);
+
+        var procRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true };
+        procRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        procRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        procRow.Controls.Add(new Label { Text = "Processes", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        procRow.Controls.Add(_watchProcesses, 1, 0);
+        root.Controls.Add(procRow, 0, 1);
+
+        root.Controls.Add(_discoveries, 0, 2);
+
+        var btnRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Padding = new Padding(0, 6, 0, 4) };
+        btnRow.Controls.Add(_scanNow);
+        btnRow.Controls.Add(_watchDiscover);
+        btnRow.Controls.Add(_stopWatchDiscover);
+        btnRow.Controls.Add(new Label { Text = "every (sec)", AutoSize = true, Padding = new Padding(8, 6, 0, 0) });
+        btnRow.Controls.Add(_discoverInterval);
+        btnRow.Controls.Add(_addSelected);
+        btnRow.Controls.Add(_addAll);
+        btnRow.Controls.Add(_autoAdd);
+        btnRow.Controls.Add(_discoverStatus);
+        root.Controls.Add(btnRow, 0, 3);
+
+        root.Controls.Add(new Label
+        {
+            Text = "Optional: pull a shared hostname list from git (raw URL). Merges into the Routes list.",
+            AutoSize = true,
+            Padding = new Padding(0, 8, 0, 4),
+        }, 0, 4);
+
+        var urlRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
+        urlRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        urlRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        urlRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        urlRow.Controls.Add(new Label { Text = "Host list URL", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        urlRow.Controls.Add(_hostListUrl, 1, 0);
+        urlRow.Controls.Add(_fetchList, 2, 0);
+        root.Controls.Add(urlRow, 0, 5);
+
+        page.Controls.Add(root);
+        return page;
+    }
+
+    private void WireEvents()
+    {
+        _refreshAdapters.Click += (_, _) => LoadAdapters();
+        _start.Click += async (_, _) => await StartAsync();
+        _stop.Click += async (_, _) => await StopAsync();
+        _applyNow.Click += async (_, _) => await ApplyNowAsync();
+        _save.Click += (_, _) => SaveConfig();
+        _tracert.Click += async (_, _) => await RunTraceAsync();
+        _cancelTrace.Click += (_, _) => _traceCts?.Cancel();
+        _scanNow.Click += (_, _) => RunDiscovery(autoAdd: _autoAdd.Checked);
+        _watchDiscover.Click += async (_, _) => await StartDiscoverWatchAsync();
+        _stopWatchDiscover.Click += async (_, _) => await StopDiscoverWatchAsync();
+        _addSelected.Click += (_, _) => AddDiscoveriesToHosts(selectedOnly: true);
+        _addAll.Click += (_, _) => AddDiscoveriesToHosts(selectedOnly: false);
+        _fetchList.Click += async (_, _) => await FetchHostListAsync();
     }
 
     private void LoadAdapters()
@@ -257,6 +333,10 @@ public sealed class MainForm : Form
         _interval.Value = Math.Clamp(config.RefreshSeconds, 5, 3600);
         if (!string.IsNullOrWhiteSpace(config.LastTraceTarget))
             _traceTarget.Text = config.LastTraceTarget;
+        _watchProcesses.Text = config.WatchProcesses ?? "Cursor";
+        _hostListUrl.Text = config.HostListUrl ?? "";
+        _autoAdd.Checked = config.AutoAddDiscoveries;
+        _discoverInterval.Value = Math.Clamp(config.DiscoverSeconds <= 0 ? 15 : config.DiscoverSeconds, 5, 600);
 
         if (!string.IsNullOrWhiteSpace(config.AdapterName))
         {
@@ -277,22 +357,207 @@ public sealed class MainForm : Form
         var adapter = _adapters.SelectedItem as NetworkAdapterChoice;
         return new AppConfig
         {
-            Hostnames = _hosts.Lines
-                .Select(l => l.Trim())
-                .Where(l => l.Length > 0)
-                .ToList(),
+            Hostnames = _hosts.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).ToList(),
             AdapterName = adapter?.Name,
             Gateway = adapter?.Gateway.ToString(),
             RefreshSeconds = (int)_interval.Value,
             LastTraceTarget = _traceTarget.Text.Trim(),
+            WatchProcesses = _watchProcesses.Text.Trim(),
+            HostListUrl = _hostListUrl.Text.Trim(),
+            AutoAddDiscoveries = _autoAdd.Checked,
+            DiscoverSeconds = (int)_discoverInterval.Value,
         };
     }
 
     private void SaveConfig()
     {
-        var cfg = CaptureConfig();
-        cfg.Save();
+        CaptureConfig().Save();
         AppendLog($"Saved {AppConfig.DefaultPath}");
+    }
+
+    private void RunDiscovery(bool autoAdd)
+    {
+        var names = _watchProcesses.Text
+            .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (names.Length == 0)
+        {
+            MessageBox.Show(this, "Enter at least one process name (e.g. Cursor).", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        try
+        {
+            var found = ConnectionDiscovery.Scan(names);
+            var newKeys = new List<string>();
+            foreach (var item in found)
+            {
+                var key = item.DisplayKey;
+                if (_discovered.TryAdd(key, item))
+                    newKeys.Add(key);
+                else
+                    _discovered[key] = item;
+            }
+
+            RefreshDiscoveryList();
+            _discoverStatus.Text = $"{_discovered.Count} endpoint(s)";
+            AppendLog($"DISCOVER scanned {names.Length} name(s) → {found.Count} connection(s), {newKeys.Count} new");
+
+            if (autoAdd && newKeys.Count > 0)
+            {
+                foreach (var key in newKeys)
+                    EnsureHostLine(key);
+                AppendLog($"DISCOVER auto-added: {string.Join(", ", newKeys)}");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog("DISCOVER ERROR " + ex.Message);
+        }
+    }
+
+    private void RefreshDiscoveryList()
+    {
+        _discoveries.BeginUpdate();
+        _discoveries.Items.Clear();
+        foreach (var item in _discovered.Values.OrderBy(v => v.ToString(), StringComparer.OrdinalIgnoreCase))
+            _discoveries.Items.Add(item);
+        _discoveries.EndUpdate();
+    }
+
+    private void EnsureHostLine(string hostOrIp)
+    {
+        var existing = _hosts.Lines
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0 && !l.StartsWith('#'))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (existing.Contains(hostOrIp))
+            return;
+        if (_hosts.Text.Length > 0 && !_hosts.Text.EndsWith('\n'))
+            _hosts.AppendText(Environment.NewLine);
+        _hosts.AppendText(hostOrIp + Environment.NewLine);
+    }
+
+    private void AddDiscoveriesToHosts(bool selectedOnly)
+    {
+        IEnumerable<DiscoveredEndpoint> items = selectedOnly
+            ? _discoveries.SelectedItems.Cast<DiscoveredEndpoint>()
+            : _discovered.Values;
+
+        var added = 0;
+        foreach (var item in items)
+        {
+            var before = _hosts.Text;
+            EnsureHostLine(item.DisplayKey);
+            if (_hosts.Text != before)
+                added++;
+        }
+
+        AppendLog(added == 0 ? "DISCOVER nothing new to add." : $"DISCOVER added {added} to host list.");
+        SaveConfig();
+    }
+
+    private async Task StartDiscoverWatchAsync()
+    {
+        if (_discoverCts is not null)
+            return;
+
+        _discoverCts = new CancellationTokenSource();
+        _watchDiscover.Enabled = false;
+        _stopWatchDiscover.Enabled = true;
+        _discoverStatus.Text = "Watching…";
+        var token = _discoverCts.Token;
+
+        _discoverTask = Task.Run(async () =>
+        {
+            while (!token.IsCancellationRequested)
+            {
+                int seconds = 15;
+                try
+                {
+                    Invoke(() =>
+                    {
+                        RunDiscovery(autoAdd: _autoAdd.Checked);
+                        seconds = (int)_discoverInterval.Value;
+                    });
+                }
+                catch (ObjectDisposedException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    try { Invoke(() => AppendLog("DISCOVER ERROR " + ex.Message)); }
+                    catch { /* ignore */ }
+                }
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(seconds), token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        }, token);
+
+        AppendLog("DISCOVER watch started.");
+        await Task.CompletedTask;
+    }
+
+    private async Task StopDiscoverWatchAsync()
+    {
+        if (_discoverCts is null)
+            return;
+
+        _discoverCts.Cancel();
+        try
+        {
+            if (_discoverTask is not null)
+                await _discoverTask.ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            // expected
+        }
+
+        _discoverCts.Dispose();
+        _discoverCts = null;
+        _discoverTask = null;
+        _watchDiscover.Enabled = true;
+        _stopWatchDiscover.Enabled = false;
+        _discoverStatus.Text = "Idle";
+        AppendLog("DISCOVER watch stopped.");
+    }
+
+    private async Task FetchHostListAsync()
+    {
+        var url = _hostListUrl.Text.Trim();
+        if (url.Length == 0)
+        {
+            MessageBox.Show(this, "Enter a raw URL to a hosts.txt or hosts.json file.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        _fetchList.Enabled = false;
+        try
+        {
+            AppendLog("FETCH " + url);
+            var incoming = await HostListSync.FetchAsync(url, CancellationToken.None).ConfigureAwait(true);
+            var merged = HostListSync.Merge(CaptureConfig().Hostnames, incoming);
+            _hosts.Text = string.Join(Environment.NewLine, merged);
+            SaveConfig();
+            AppendLog($"FETCH merged {incoming.Count} host(s); list now {merged.Count}.");
+        }
+        catch (Exception ex)
+        {
+            AppendLog("FETCH ERROR " + ex.Message);
+            MessageBox.Show(this, ex.Message, "Fetch list failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _fetchList.Enabled = true;
+        }
     }
 
     private async Task ApplyNowAsync()
@@ -356,7 +621,6 @@ public sealed class MainForm : Form
         _loopCts = new CancellationTokenSource();
         _start.Enabled = false;
         _stop.Enabled = true;
-        // Hostnames stay editable so you can add domains on the fly.
         _status.Text = "Running";
         _tray.Text = "CopperHead (running)";
 
@@ -497,7 +761,6 @@ public sealed class MainForm : Form
         var target = _traceTarget.Text.Trim();
         if (target.Length == 0)
         {
-            // Convenience: use first hostname in the list
             target = CaptureConfig().Hostnames.FirstOrDefault(h => !h.StartsWith('#')) ?? "";
             _traceTarget.Text = target;
         }
@@ -556,6 +819,7 @@ public sealed class MainForm : Form
             _loopCts?.Dispose();
             _refreshNowCts?.Dispose();
             _traceCts?.Dispose();
+            _discoverCts?.Dispose();
         }
         base.Dispose(disposing);
     }
