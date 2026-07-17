@@ -8,6 +8,7 @@ Windows admin utility that keeps **/32 host routes** pointed at a chosen NIC (fo
 - **Apply now** — refresh routes immediately after editing domains
 - Periodic DNS refresh
 - **Tracert** — pins the target via the selected NIC, then streams live `tracert -d` output (first hop should be your tether gateway)
+- Custom CopperHead tray / window icon (`Assets/copperhead.ico`)
 - Stop clears only routes CopperHead created
 
 ## Build (Windows)

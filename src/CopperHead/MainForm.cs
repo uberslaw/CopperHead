@@ -55,12 +55,13 @@ public sealed class MainForm : Form
         Height = 720;
         MinimumSize = new Size(720, 560);
         StartPosition = FormStartPosition.CenterScreen;
+        Icon = AppIcons.AppIcon;
 
         _tray = new NotifyIcon
         {
             Text = "CopperHead",
             Visible = true,
-            Icon = SystemIcons.Shield,
+            Icon = AppIcons.AppIcon,
         };
         _tray.DoubleClick += (_, _) =>
         {
