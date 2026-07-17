@@ -1,7 +1,21 @@
-# AmplifyApp
+# CopperHead
 
-## CopperHead
+Windows utility that periodically resolves hostnames and updates `/32` routes so selected destinations egress via a chosen adapter (for example a phone tether).
 
-Windows utility under [`src/CopperHead`](src/CopperHead) that periodically resolves hostnames and updates `/32` routes so selected destinations egress via a chosen adapter (e.g. phone tether).
+## Project
+
+| Path | Description |
+|---|---|
+| [`src/CopperHead`](src/CopperHead) | WinForms app — hostname list, route refresh, tracert, tray icon |
 
 See [`src/CopperHead/README.md`](src/CopperHead/README.md) for build and usage.
+
+## Quick start
+
+```powershell
+cd src\CopperHead
+dotnet publish -c Release -r win-x64 --self-contained false -o ..\..\publish
+Start-Process ..\..\publish\CopperHead.exe -Verb RunAs
+```
+
+Repository: https://github.com/uberslaw/CopperHead
