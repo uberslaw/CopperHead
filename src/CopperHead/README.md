@@ -9,6 +9,7 @@ Windows admin utility that keeps **/32 host routes** pointed at a chosen NIC (fo
 - Periodic DNS refresh
 - **Tracert** — pins the target via the selected NIC, then streams live `tracert -d` output (first hop should be your tether gateway)
 - **Discover** tab — watch process TCP connections + DNS cache (no injection); add hosts/IPs to the route list
+- **Traffic** tab — TX/s, RX/s, session and all-time totals per IP:port; sortable columns; pin favourites to top
 - **Fetch list** — pull a shared hostname file from a raw git URL and merge
 - Custom CopperHead tray / window icon (`Assets/copperhead.ico`)
 - Stop clears only routes CopperHead created

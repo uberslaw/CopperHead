@@ -45,27 +45,51 @@ public sealed class MainForm : Form
     private readonly Button _fetchList = new() { Text = "Fetch list", AutoSize = true };
     private readonly Label _discoverStatus = new() { Text = "Idle", AutoSize = true, Padding = new Padding(8, 6, 0, 0) };
 
+    // Traffic tab
+    private readonly ListView _trafficList = new()
+    {
+        Dock = DockStyle.Fill,
+        View = View.Details,
+        FullRowSelect = true,
+        GridLines = true,
+        MultiSelect = true,
+        HideSelection = false,
+    };
+    private readonly Button _trafficStart = new() { Text = "Start monitor", AutoSize = true };
+    private readonly Button _trafficStop = new() { Text = "Stop monitor", AutoSize = true, Enabled = false };
+    private readonly Button _trafficPin = new() { Text = "Pin / Unpin", AutoSize = true };
+    private readonly Button _trafficResetSession = new() { Text = "Reset session", AutoSize = true };
+    private readonly Label _trafficStatus = new() { Text = "Idle", AutoSize = true, Padding = new Padding(8, 6, 0, 0) };
+    private readonly CheckBox _trafficActiveOnly = new() { Text = "Active only", AutoSize = true, Checked = true };
+
     private readonly NotifyIcon _tray;
     private readonly HostRouteService _service = new();
     private readonly TraceRouteRunner _tracer;
+    private readonly TrafficMonitor _traffic;
     private readonly Dictionary<string, DiscoveredEndpoint> _discovered = new(StringComparer.OrdinalIgnoreCase);
+    private List<TrafficRow> _trafficRows = [];
+    private int _trafficSortColumn = 4;
+    private bool _trafficSortAsc;
 
     private CancellationTokenSource? _loopCts;
     private CancellationTokenSource? _refreshNowCts;
     private CancellationTokenSource? _traceCts;
     private CancellationTokenSource? _discoverCts;
+    private CancellationTokenSource? _trafficCts;
     private Task? _loopTask;
     private Task? _discoverTask;
+    private Task? _trafficTask;
     private bool _exitAfterStop;
 
     public MainForm()
     {
         _tracer = new TraceRouteRunner(_service.Routes);
+        _traffic = new TrafficMonitor(new TrafficStatsStore());
 
         Text = "CopperHead";
-        Width = 920;
-        Height = 760;
-        MinimumSize = new Size(760, 600);
+        Width = 980;
+        Height = 780;
+        MinimumSize = new Size(800, 620);
         StartPosition = FormStartPosition.CenterScreen;
         Icon = AppIcons.AppIcon;
 
@@ -88,19 +112,23 @@ public sealed class MainForm : Form
         {
             await StopAsync();
             await StopDiscoverWatchAsync();
+            await StopTrafficMonitorAsync();
             Close();
         });
         _tray.ContextMenuStrip = trayMenu;
 
+        InitTrafficList();
+
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(BuildRoutesTab());
         tabs.TabPages.Add(BuildDiscoverTab());
+        tabs.TabPages.Add(BuildTrafficTab());
 
         var footer = new Label
         {
             Dock = DockStyle.Bottom,
             Height = 28,
-            Text = "CopperHead · Admin required · Discovery uses TCP table + DNS cache (no injection) · Stop clears managed routes",
+            Text = "CopperHead · Admin required · TCP table / ESTATS (no injection) · Stop clears managed routes",
             ForeColor = Color.DimGray,
             Padding = new Padding(10, 6, 10, 0),
         };
@@ -125,12 +153,13 @@ public sealed class MainForm : Form
 
         FormClosing += async (_, e) =>
         {
-            if ((_loopCts is not null || _traceCts is not null || _discoverCts is not null) && !_exitAfterStop)
+            if ((_loopCts is not null || _traceCts is not null || _discoverCts is not null || _trafficCts is not null) && !_exitAfterStop)
             {
                 e.Cancel = true;
                 _exitAfterStop = true;
                 _traceCts?.Cancel();
                 await StopDiscoverWatchAsync();
+                await StopTrafficMonitorAsync();
                 await StopAsync();
                 _tray.Visible = false;
                 Close();
@@ -280,6 +309,65 @@ public sealed class MainForm : Form
         return page;
     }
 
+    private void InitTrafficList()
+    {
+        _trafficList.Columns.Add("★", 36);
+        _trafficList.Columns.Add("IP", 140);
+        _trafficList.Columns.Add("Port", 60);
+        _trafficList.Columns.Add("Host", 160);
+        _trafficList.Columns.Add("TX/s", 90);
+        _trafficList.Columns.Add("RX/s", 90);
+        _trafficList.Columns.Add("This session", 130);
+        _trafficList.Columns.Add("All time", 130);
+        _trafficList.ColumnClick += (_, e) =>
+        {
+            if (_trafficSortColumn == e.Column)
+                _trafficSortAsc = !_trafficSortAsc;
+            else
+            {
+                _trafficSortColumn = e.Column;
+                _trafficSortAsc = e.Column is 1 or 2 or 3; // text cols asc first
+            }
+            RefreshTrafficList();
+            SaveConfig();
+        };
+        _trafficList.DoubleClick += (_, _) => TogglePinSelected();
+    }
+
+    private TabPage BuildTrafficTab()
+    {
+        var page = new TabPage("Traffic");
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 3,
+            Padding = new Padding(10),
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+        root.Controls.Add(new Label
+        {
+            Text = "Live TCP byte rates for processes listed on Discover (ESTATS). Click headers to sort. Double-click or Pin to keep favourites on top.",
+            AutoSize = true,
+            Padding = new Padding(0, 0, 0, 4),
+        }, 0, 0);
+
+        var btnRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Padding = new Padding(0, 2, 0, 6) };
+        btnRow.Controls.Add(_trafficStart);
+        btnRow.Controls.Add(_trafficStop);
+        btnRow.Controls.Add(_trafficPin);
+        btnRow.Controls.Add(_trafficResetSession);
+        btnRow.Controls.Add(_trafficActiveOnly);
+        btnRow.Controls.Add(_trafficStatus);
+        root.Controls.Add(btnRow, 0, 1);
+        root.Controls.Add(_trafficList, 0, 2);
+        page.Controls.Add(root);
+        return page;
+    }
+
     private void WireEvents()
     {
         _refreshAdapters.Click += (_, _) => LoadAdapters();
@@ -295,6 +383,16 @@ public sealed class MainForm : Form
         _addSelected.Click += (_, _) => AddDiscoveriesToHosts(selectedOnly: true);
         _addAll.Click += (_, _) => AddDiscoveriesToHosts(selectedOnly: false);
         _fetchList.Click += async (_, _) => await FetchHostListAsync();
+        _trafficStart.Click += async (_, _) => await StartTrafficMonitorAsync();
+        _trafficStop.Click += async (_, _) => await StopTrafficMonitorAsync();
+        _trafficPin.Click += (_, _) => TogglePinSelected();
+        _trafficResetSession.Click += (_, _) =>
+        {
+            _traffic.ResetSession();
+            RefreshTrafficList();
+            AppendLog("TRAFFIC session counters reset.");
+        };
+        _trafficActiveOnly.CheckedChanged += (_, _) => RefreshTrafficList();
     }
 
     private void LoadAdapters()
@@ -337,6 +435,9 @@ public sealed class MainForm : Form
         _hostListUrl.Text = config.HostListUrl ?? "";
         _autoAdd.Checked = config.AutoAddDiscoveries;
         _discoverInterval.Value = Math.Clamp(config.DiscoverSeconds <= 0 ? 15 : config.DiscoverSeconds, 5, 600);
+        _traffic.SetPinned(config.PinnedTrafficKeys ?? []);
+        _trafficSortColumn = config.TrafficSortColumn;
+        _trafficSortAsc = config.TrafficSortAsc;
 
         if (!string.IsNullOrWhiteSpace(config.AdapterName))
         {
@@ -366,6 +467,9 @@ public sealed class MainForm : Form
             HostListUrl = _hostListUrl.Text.Trim(),
             AutoAddDiscoveries = _autoAdd.Checked,
             DiscoverSeconds = (int)_discoverInterval.Value,
+            PinnedTrafficKeys = _traffic.PinnedKeys.ToList(),
+            TrafficSortColumn = _trafficSortColumn,
+            TrafficSortAsc = _trafficSortAsc,
         };
     }
 
@@ -528,6 +632,217 @@ public sealed class MainForm : Form
         _stopWatchDiscover.Enabled = false;
         _discoverStatus.Text = "Idle";
         AppendLog("DISCOVER watch stopped.");
+    }
+
+    private async Task StartTrafficMonitorAsync()
+    {
+        if (_trafficCts is not null)
+            return;
+
+        var names = _watchProcesses.Text
+            .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (names.Length == 0)
+        {
+            MessageBox.Show(this, "Set process names on the Discover tab first (e.g. Cursor).", Text,
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        _trafficCts = new CancellationTokenSource();
+        _trafficStart.Enabled = false;
+        _trafficStop.Enabled = true;
+        _trafficStatus.Text = "Monitoring…";
+        var token = _trafficCts.Token;
+
+        _trafficTask = Task.Run(async () =>
+        {
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    string[] procs = [];
+                    Invoke(() =>
+                    {
+                        procs = _watchProcesses.Text
+                            .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    });
+
+                    var rows = _traffic.Sample(procs);
+                    Invoke(() =>
+                    {
+                        _trafficRows = rows.ToList();
+                        RefreshTrafficList();
+                        var active = rows.Count(r => r.Active);
+                        _trafficStatus.Text = $"{active} active / {rows.Count} known";
+                    });
+                }
+                catch (ObjectDisposedException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    try { Invoke(() => AppendLog("TRAFFIC ERROR " + ex.Message)); }
+                    catch { /* ignore */ }
+                }
+
+                try
+                {
+                    await Task.Delay(1000, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        }, token);
+
+        AppendLog("TRAFFIC monitor started (1s samples).");
+        await Task.CompletedTask;
+    }
+
+    private async Task StopTrafficMonitorAsync()
+    {
+        if (_trafficCts is null)
+            return;
+
+        _trafficCts.Cancel();
+        try
+        {
+            if (_trafficTask is not null)
+                await _trafficTask.ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            // expected
+        }
+
+        _trafficCts.Dispose();
+        _trafficCts = null;
+        _trafficTask = null;
+        _trafficStart.Enabled = true;
+        _trafficStop.Enabled = false;
+        _trafficStatus.Text = "Idle";
+        SaveConfig();
+        AppendLog("TRAFFIC monitor stopped.");
+    }
+
+    private void TogglePinSelected()
+    {
+        if (_trafficList.SelectedItems.Count == 0)
+            return;
+
+        foreach (ListViewItem item in _trafficList.SelectedItems)
+        {
+            if (item.Tag is string key)
+                _traffic.TogglePin(key);
+        }
+
+        // Update pinned flags on cached rows
+        var pinned = _traffic.PinnedKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in _trafficRows)
+            row.Pinned = pinned.Contains(row.Key);
+
+        RefreshTrafficList();
+        SaveConfig();
+    }
+
+    private void RefreshTrafficList()
+    {
+        IEnumerable<TrafficRow> rows = _trafficRows;
+        if (_trafficActiveOnly.Checked)
+            rows = rows.Where(r => r.Active || r.Pinned);
+
+        var sorted = SortTraffic(rows).ToList();
+        var selected = _trafficList.SelectedItems
+            .Cast<ListViewItem>()
+            .Select(i => i.Tag as string)
+            .Where(k => k is not null)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase)!;
+
+        _trafficList.BeginUpdate();
+        _trafficList.Items.Clear();
+        foreach (var row in sorted)
+        {
+            var ipText = row.Hostname is null ? row.Ip : row.Ip;
+            var item = new ListViewItem(row.Pinned ? "★" : "")
+            {
+                Tag = row.Key,
+                ForeColor = row.Active ? SystemColors.WindowText : Color.Gray,
+            };
+            item.SubItems.Add(ipText);
+            item.SubItems.Add(row.Port.ToString());
+            item.SubItems.Add(row.Hostname ?? "");
+            item.SubItems.Add(FormatRate(row.TxPerSec));
+            item.SubItems.Add(FormatRate(row.RxPerSec));
+            item.SubItems.Add(FormatPair(row.SessionTx, row.SessionRx));
+            item.SubItems.Add(FormatPair(row.AllTimeTx, row.AllTimeRx));
+            if (row.Pinned)
+                item.Font = new Font(_trafficList.Font, FontStyle.Bold);
+            _trafficList.Items.Add(item);
+            if (selected.Contains(row.Key))
+                item.Selected = true;
+        }
+        _trafficList.EndUpdate();
+    }
+
+    private IEnumerable<TrafficRow> SortTraffic(IEnumerable<TrafficRow> rows)
+    {
+        IOrderedEnumerable<TrafficRow> ordered = rows
+            .OrderByDescending(r => r.Pinned); // favourites always on top
+
+        ordered = _trafficSortColumn switch
+        {
+            0 => _trafficSortAsc
+                ? ordered.ThenBy(r => r.Pinned)
+                : ordered.ThenByDescending(r => r.Pinned),
+            1 => _trafficSortAsc
+                ? ordered.ThenBy(r => r.Ip, StringComparer.OrdinalIgnoreCase)
+                : ordered.ThenByDescending(r => r.Ip, StringComparer.OrdinalIgnoreCase),
+            2 => _trafficSortAsc
+                ? ordered.ThenBy(r => r.Port)
+                : ordered.ThenByDescending(r => r.Port),
+            3 => _trafficSortAsc
+                ? ordered.ThenBy(r => r.Hostname ?? "", StringComparer.OrdinalIgnoreCase)
+                : ordered.ThenByDescending(r => r.Hostname ?? "", StringComparer.OrdinalIgnoreCase),
+            4 => _trafficSortAsc
+                ? ordered.ThenBy(r => r.TxPerSec)
+                : ordered.ThenByDescending(r => r.TxPerSec),
+            5 => _trafficSortAsc
+                ? ordered.ThenBy(r => r.RxPerSec)
+                : ordered.ThenByDescending(r => r.RxPerSec),
+            6 => _trafficSortAsc
+                ? ordered.ThenBy(r => r.SessionTx + r.SessionRx)
+                : ordered.ThenByDescending(r => r.SessionTx + r.SessionRx),
+            7 => _trafficSortAsc
+                ? ordered.ThenBy(r => r.AllTimeTx + r.AllTimeRx)
+                : ordered.ThenByDescending(r => r.AllTimeTx + r.AllTimeRx),
+            _ => ordered.ThenByDescending(r => r.TxPerSec),
+        };
+
+        return ordered;
+    }
+
+    private static string FormatRate(double bytesPerSec)
+    {
+        if (bytesPerSec < 1) return "0";
+        return FormatBytes((ulong)bytesPerSec) + "/s";
+    }
+
+    private static string FormatPair(ulong tx, ulong rx) =>
+        $"↑{FormatBytes(tx)}  ↓{FormatBytes(rx)}";
+
+    private static string FormatBytes(ulong bytes)
+    {
+        double v = bytes;
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var u = 0;
+        while (v >= 1024 && u < units.Length - 1)
+        {
+            v /= 1024;
+            u++;
+        }
+        return u == 0 ? $"{bytes}{units[u]}" : $"{v:0.##}{units[u]}";
     }
 
     private async Task FetchHostListAsync()
@@ -820,6 +1135,7 @@ public sealed class MainForm : Form
             _refreshNowCts?.Dispose();
             _traceCts?.Dispose();
             _discoverCts?.Dispose();
+            _trafficCts?.Dispose();
         }
         base.Dispose(disposing);
     }

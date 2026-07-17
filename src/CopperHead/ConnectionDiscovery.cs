@@ -68,7 +68,7 @@ public static class ConnectionDiscovery
                 continue;
             if (row.State != 5) // MIB_TCP_STATE_ESTAB
                 continue;
-            if (IsIgnored(row.RemoteAddress))
+            if (IsPrivateOrLocal(row.RemoteAddress))
                 continue;
 
             dns.TryGetValue(row.RemoteAddress.ToString(), out var host);
@@ -89,7 +89,7 @@ public static class ConnectionDiscovery
             .ToList();
     }
 
-    private static bool IsIgnored(IPAddress ip)
+    public static bool IsPrivateOrLocal(IPAddress ip)
     {
         if (IPAddress.IsLoopback(ip))
             return true;
@@ -111,7 +111,15 @@ public static class ConnectionDiscovery
 
 internal static class TcpTableReader
 {
-    internal readonly record struct Row(int ProcessId, IPAddress RemoteAddress, int RemotePort, int State);
+    internal readonly record struct Row(
+        int ProcessId,
+        IPAddress RemoteAddress,
+        int RemotePort,
+        int State,
+        uint LocalAddrRaw,
+        uint LocalPortRaw,
+        uint RemoteAddrRaw,
+        uint RemotePortRaw);
 
     private const int AfInet = 2;
     private const int TcpTableOwnerPidAll = 5;
@@ -146,7 +154,15 @@ internal static class TcpTableReader
                 var row = Marshal.PtrToStructure<MibTcpRowOwnerPid>(rowPtr + i * rowSize);
                 var addr = new IPAddress(row.remoteAddr);
                 var port = (int)SwapUInt16((ushort)row.remotePort);
-                rows.Add(new Row((int)row.owningPid, addr, port, (int)row.state));
+                rows.Add(new Row(
+                    (int)row.owningPid,
+                    addr,
+                    port,
+                    (int)row.state,
+                    row.localAddr,
+                    row.localPort,
+                    row.remoteAddr,
+                    row.remotePort));
             }
 
             return rows;

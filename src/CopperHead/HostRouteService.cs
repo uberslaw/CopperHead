@@ -15,6 +15,9 @@ public sealed class AppConfig
     public string? HostListUrl { get; set; }
     public bool AutoAddDiscoveries { get; set; }
     public int DiscoverSeconds { get; set; } = 15;
+    public List<string> PinnedTrafficKeys { get; set; } = new();
+    public int TrafficSortColumn { get; set; } = 4; // TX/s default
+    public bool TrafficSortAsc { get; set; }
 
     public static string DefaultPath =>
         Path.Combine(AppContext.BaseDirectory, "config.json");
