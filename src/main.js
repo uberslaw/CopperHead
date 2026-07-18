@@ -7,6 +7,13 @@ const {
   growFromDock,
   applyPortion,
 } = require("./layout");
+const {
+  CATEGORIES,
+  getList,
+  resolvePalette,
+  normalizePalette,
+} = require("./palettes");
+const { loadPrefs, savePrefs } = require("./persist");
 
 /** @type {BrowserWindow | null} */
 let overlayWindow = null;
@@ -49,7 +56,12 @@ let sharedSettings = {
   alwaysOnTop: true,
   clickThrough: false,
   overlayMinimized: false, // checkbox: keep grid hidden while ticked
+  paletteCategory: "dark",
+  paletteIndex: 1, // Midnight Copper — close to original copper look
 };
+
+/** @type {ReturnType<typeof normalizePalette>[]} */
+let customPalettes = [];
 
 /** True when click-through was enabled because grid covers panel / fullscreen. */
 let clickThroughAuto = false;
@@ -67,8 +79,91 @@ const PANEL_WIDTH = 320;
 const PANEL_HEIGHT = 720;
 
 function broadcastSettings() {
-  overlayWindow?.webContents.send("settings:apply", sharedSettings);
-  controlWindow?.webContents.send("settings:apply", sharedSettings);
+  const payload = {
+    ...sharedSettings,
+    customPalettes,
+    paletteInfo: currentPaletteInfo(),
+  };
+  overlayWindow?.webContents.send("settings:apply", payload);
+  controlWindow?.webContents.send("settings:apply", payload);
+}
+
+function currentPaletteInfo() {
+  const resolved = resolvePalette(
+    sharedSettings.paletteCategory,
+    sharedSettings.paletteIndex,
+    customPalettes
+  );
+  if (!resolved) {
+    return {
+      category: sharedSettings.paletteCategory,
+      index: 0,
+      count: 0,
+      name: "—",
+      palette: null,
+    };
+  }
+  return {
+    category: sharedSettings.paletteCategory,
+    index: resolved.index,
+    count: resolved.count,
+    name: resolved.palette.name,
+    palette: resolved.palette,
+  };
+}
+
+function applyPalette(category, index, { persist = true } = {}) {
+  const resolved = resolvePalette(category, index, customPalettes);
+  if (!resolved) return null;
+  sharedSettings.paletteCategory = category;
+  sharedSettings.paletteIndex = resolved.index;
+  sharedSettings.gridColor = resolved.palette.grid;
+  sharedSettings.majorColor = resolved.palette.major;
+  sharedSettings.accentColor = resolved.palette.accent;
+  broadcastSettings();
+  if (persist) persistPrefs();
+  return currentPaletteInfo();
+}
+
+function cyclePalette(category) {
+  const list = getList(category, customPalettes);
+  if (!list.length) return null;
+  const same = sharedSettings.paletteCategory === category;
+  const nextIndex = same
+    ? (Number(sharedSettings.paletteIndex) + 1) % list.length
+    : 0;
+  return applyPalette(category, nextIndex);
+}
+
+function persistPrefs() {
+  const userData = app.getPath("userData");
+  savePrefs(userData, {
+    paletteCategory: sharedSettings.paletteCategory,
+    paletteIndex: sharedSettings.paletteIndex,
+    customPalettes,
+    gridColor: sharedSettings.gridColor,
+    majorColor: sharedSettings.majorColor,
+    accentColor: sharedSettings.accentColor,
+  });
+}
+
+function loadPersistedPrefs() {
+  const prefs = loadPrefs(app.getPath("userData"));
+  if (Array.isArray(prefs.customPalettes)) {
+    customPalettes = prefs.customPalettes.map((p, i) => normalizePalette(p, i));
+  }
+  const category = CATEGORIES.includes(prefs.paletteCategory)
+    ? prefs.paletteCategory
+    : sharedSettings.paletteCategory;
+  const index = Number.isFinite(Number(prefs.paletteIndex))
+    ? Number(prefs.paletteIndex)
+    : sharedSettings.paletteIndex;
+  const applied = applyPalette(category, index, { persist: false });
+  if (!applied && prefs.gridColor) {
+    sharedSettings.gridColor = prefs.gridColor;
+    sharedSettings.majorColor = prefs.majorColor || sharedSettings.majorColor;
+    sharedSettings.accentColor = prefs.accentColor || sharedSettings.accentColor;
+  }
 }
 
 function broadcastOverlayStatus(status) {
@@ -431,7 +526,11 @@ ipcMain.handle("app:get-role", (event) => {
   return "overlay";
 });
 
-ipcMain.handle("settings:get", () => ({ ...sharedSettings }));
+ipcMain.handle("settings:get", () => ({
+  ...sharedSettings,
+  customPalettes,
+  paletteInfo: currentPaletteInfo(),
+}));
 
 ipcMain.handle("settings:update", (_event, patch) => {
   sharedSettings = { ...sharedSettings, ...patch };
@@ -452,8 +551,59 @@ ipcMain.handle("settings:update", (_event, patch) => {
   if ("overlayMinimized" in patch) {
     setOverlayHideReason("pinned", !!sharedSettings.overlayMinimized);
   }
+  if ("gridColor" in patch || "majorColor" in patch || "accentColor" in patch) {
+    persistPrefs();
+  }
   broadcastSettings();
-  return { ...sharedSettings };
+  return {
+    ...sharedSettings,
+    customPalettes,
+    paletteInfo: currentPaletteInfo(),
+  };
+});
+
+ipcMain.handle("palette:cycle", (_event, category) => {
+  return cyclePalette(category);
+});
+
+ipcMain.handle("palette:list", (_event, category) => {
+  return getList(category, customPalettes);
+});
+
+ipcMain.handle("palette:info", () => currentPaletteInfo());
+
+ipcMain.handle("palette:save-custom", (_event, entry) => {
+  const palette = normalizePalette(entry, customPalettes.length);
+  customPalettes.push(palette);
+  applyPalette("custom", customPalettes.length - 1);
+  return {
+    customPalettes,
+    paletteInfo: currentPaletteInfo(),
+  };
+});
+
+ipcMain.handle("palette:delete-custom", (_event, id) => {
+  const before = customPalettes.length;
+  customPalettes = customPalettes.filter((p) => p.id !== id);
+  if (customPalettes.length !== before) {
+    if (sharedSettings.paletteCategory === "custom") {
+      if (!customPalettes.length) {
+        applyPalette("dark", 0);
+      } else {
+        applyPalette(
+          "custom",
+          Math.min(sharedSettings.paletteIndex, customPalettes.length - 1)
+        );
+      }
+    } else {
+      persistPrefs();
+      broadcastSettings();
+    }
+  }
+  return {
+    customPalettes,
+    paletteInfo: currentPaletteInfo(),
+  };
 });
 
 function clampLineCount(value) {
@@ -1003,6 +1153,7 @@ ipcMain.handle("app:get-platform", () => ({
 }));
 
 app.whenReady().then(() => {
+  loadPersistedPrefs();
   createOverlayWindow();
   createControlWindow();
   registerShortcuts();

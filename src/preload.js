@@ -59,4 +59,9 @@ contextBridge.exposeInMainWorld("gridFinder", {
   setSticky: (guide) => ipcRenderer.invoke("sticky:set", guide),
   clearSticky: () => ipcRenderer.invoke("sticky:clear"),
   getSticky: () => ipcRenderer.invoke("sticky:get"),
+  cyclePalette: (category) => ipcRenderer.invoke("palette:cycle", category),
+  listPalettes: (category) => ipcRenderer.invoke("palette:list", category),
+  paletteInfo: () => ipcRenderer.invoke("palette:info"),
+  saveCustomPalette: (entry) => ipcRenderer.invoke("palette:save-custom", entry),
+  deleteCustomPalette: (id) => ipcRenderer.invoke("palette:delete-custom", id),
 });

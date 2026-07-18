@@ -114,6 +114,51 @@
             <span class="field-hint">Solid → half → quarter … down to 1px dots with 1px gaps</span>
           </label>
 
+          <div class="palette-block">
+            <div class="field-label">
+              Palettes
+              <strong id="paletteName">—</strong>
+            </div>
+            <div class="palette-cycle-row">
+              <button type="button" class="btn palette-btn" data-palette-cat="dark" id="paletteDark">
+                Dark
+              </button>
+              <button type="button" class="btn palette-btn" data-palette-cat="light" id="paletteLight">
+                Light
+              </button>
+              <button type="button" class="btn palette-btn" data-palette-cat="neon" id="paletteNeon">
+                Neon
+              </button>
+              <button type="button" class="btn palette-btn" data-palette-cat="pastel" id="palettePastel">
+                Pastel
+              </button>
+            </div>
+            <div class="palette-preview" id="palettePreview" aria-hidden="true">
+              <span data-role="grid"></span>
+              <span data-role="major"></span>
+              <span data-role="accent"></span>
+            </div>
+            <p class="field-hint">
+              Click a style to cycle its 10 presets (3 colors each). Last used is restored next launch.
+            </p>
+
+            <div class="custom-palette-row">
+              <button type="button" class="btn palette-btn" data-palette-cat="custom" id="paletteCustom">
+                Custom
+              </button>
+              <button type="button" class="btn ghost" id="btnSaveCustomPalette">
+                Save current as custom
+              </button>
+              <button type="button" class="btn ghost danger-text" id="btnDeleteCustomPalette">
+                Delete current custom
+              </button>
+            </div>
+            <label class="field">
+              <span class="field-label">Custom name <strong id="customNameHint">optional</strong></span>
+              <input type="text" id="customPaletteName" maxlength="40" placeholder="My palette" />
+            </label>
+          </div>
+
           <div class="color-row">
             <label class="color-field">
               <span class="swatch-label">Grid</span>

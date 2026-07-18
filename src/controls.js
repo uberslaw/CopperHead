@@ -19,6 +19,9 @@
   const accentColorInput = document.getElementById("accentColor");
   const toggleMajor = document.getElementById("toggleMajor");
   const toggleAccent = document.getElementById("toggleAccent");
+  const paletteName = document.getElementById("paletteName");
+  const palettePreview = document.getElementById("palettePreview");
+  const customPaletteName = document.getElementById("customPaletteName");
   const alwaysOnTop = document.getElementById("alwaysOnTop");
   const clickThrough = document.getElementById("clickThrough");
   const overlayMinimized = document.getElementById("overlayMinimized");
@@ -73,6 +76,7 @@
     gridColorInput.value = settings.gridColor;
     majorColorInput.value = settings.majorColor;
     accentColorInput.value = settings.accentColor;
+    syncPaletteUi(settings);
     alwaysOnTop.checked = !!settings.alwaysOnTop;
     clickThrough.checked = !!settings.clickThrough;
     overlayMinimized.checked = !!settings.overlayMinimized;
@@ -118,6 +122,29 @@
 
   function patch(partial) {
     return api.updateSettings(partial);
+  }
+
+  function syncPaletteUi(settings) {
+    const info = settings.paletteInfo;
+    const category = settings.paletteCategory || info?.category || "dark";
+    document.querySelectorAll("[data-palette-cat]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.paletteCat === category);
+      btn.classList.toggle("is-active", btn.dataset.paletteCat === category);
+    });
+    if (info && info.count > 0) {
+      paletteName.textContent = `${info.name} · ${info.index + 1}/${info.count}`;
+    } else if (category === "custom") {
+      paletteName.textContent = "No custom palettes yet";
+    } else {
+      paletteName.textContent = "—";
+    }
+    const grid = settings.gridColor || info?.palette?.grid || "#d9773a";
+    const major = settings.majorColor || info?.palette?.major || "#f0c49a";
+    const accent = settings.accentColor || info?.palette?.accent || "#ffe6c8";
+    const spans = palettePreview.querySelectorAll("span");
+    if (spans[0]) spans[0].style.background = grid;
+    if (spans[1]) spans[1].style.background = major;
+    if (spans[2]) spans[2].style.background = accent;
   }
 
   async function nudgeResolution(direction) {
@@ -232,6 +259,42 @@
   accentColorInput.addEventListener("input", () =>
     patch({ accentColor: accentColorInput.value })
   );
+
+  document.querySelectorAll("[data-palette-cat]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const info = await api.cyclePalette(btn.dataset.paletteCat);
+      if (info) {
+        const settings = await api.getSettings();
+        syncLabels(settings);
+      }
+    });
+  });
+
+  document
+    .getElementById("btnSaveCustomPalette")
+    .addEventListener("click", async () => {
+      const name =
+        customPaletteName.value.trim() ||
+        `Custom ${new Date().toLocaleDateString()}`;
+      await api.saveCustomPalette({
+        name,
+        grid: gridColorInput.value,
+        major: majorColorInput.value,
+        accent: accentColorInput.value,
+      });
+      customPaletteName.value = "";
+      syncLabels(await api.getSettings());
+    });
+
+  document
+    .getElementById("btnDeleteCustomPalette")
+    .addEventListener("click", async () => {
+      const settings = await api.getSettings();
+      const id = settings.paletteInfo?.palette?.id;
+      if (settings.paletteCategory !== "custom" || !id) return;
+      await api.deleteCustomPalette(id);
+      syncLabels(await api.getSettings());
+    });
 
   toggleMajor.addEventListener("click", () => {
     const next = toggleMajor.getAttribute("aria-pressed") !== "true";
@@ -386,7 +449,7 @@
     const rows = [
       [`${kbd(mod)}+drag grid`, "Move overlay"],
       [`${kbd("Z")} (hold)`, "Hide grid while held"],
-      [`${kbd("+")} / ${kbd("−")}`, "Zoom resolution in / out"],
+      [`${kbd("+")} / ${kbd("−")} / scroll`, "Zoom resolution in / out"],
       [`${kbd(mod)}+${kbd("Q")}`, "Quit GridFinder"],
       [`${kbd(mod)}+${kbd("Shift")}+${kbd("G")}`, "Toggle click-through"],
       [`${kbd(mod)}+${kbd("Shift")}+${kbd("P")}`, "Reset controls panel"],
