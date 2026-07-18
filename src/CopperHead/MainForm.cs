@@ -51,6 +51,8 @@ public sealed class MainForm : Form
     private readonly Label _processDetectStatus = new() { Text = "Idle", AutoSize = true, Padding = new Padding(8, 6, 0, 0) };
     private readonly Label _trackedBanner = new() { Text = "Tracking: (none)", AutoSize = true, Padding = new Padding(0, 4, 0, 4) };
     private List<RunningProcessInfo> _processSnapshot = [];
+    private int _processSortColumn; // Name
+    private bool _processSortAsc = true;
 
     // Discover tab
     private readonly ListBox _newDiscoveries = new() { Dock = DockStyle.Fill, IntegralHeight = false, SelectionMode = SelectionMode.MultiExtended };
@@ -306,6 +308,17 @@ public sealed class MainForm : Form
         _processList.Columns.Add("PID", 60);
         _processList.Columns.Add("Path", 420);
         _processList.Columns.Add("Company", 160);
+        _processList.ColumnClick += (_, e) =>
+        {
+            if (_processSortColumn == e.Column)
+                _processSortAsc = !_processSortAsc;
+            else
+            {
+                _processSortColumn = e.Column;
+                _processSortAsc = e.Column != 1; // PID defaults descending; text ascending
+            }
+            RefreshProcessListView();
+        };
         _processList.DoubleClick += (_, _) => TrackSelectedProcesses();
     }
 
@@ -793,6 +806,8 @@ public sealed class MainForm : Form
                 p.Pid.ToString().Contains(filter, StringComparison.OrdinalIgnoreCase));
         }
 
+        rows = SortProcesses(rows);
+
         var tracked = GetTrackedNames().ToHashSet(StringComparer.OrdinalIgnoreCase);
         var selectedPids = _processList.SelectedItems
             .Cast<ListViewItem>()
@@ -817,6 +832,21 @@ public sealed class MainForm : Form
                 item.Selected = true;
         }
         _processList.EndUpdate();
+    }
+
+    private IEnumerable<RunningProcessInfo> SortProcesses(IEnumerable<RunningProcessInfo> rows)
+    {
+        Func<RunningProcessInfo, IComparable> key = _processSortColumn switch
+        {
+            1 => p => p.Pid,
+            2 => p => p.Path ?? "",
+            3 => p => p.Company ?? "",
+            _ => p => p.Name ?? "",
+        };
+
+        return _processSortAsc
+            ? rows.OrderBy(key).ThenBy(p => p.Pid)
+            : rows.OrderByDescending(key).ThenByDescending(p => p.Pid);
     }
 
     private string[] GetTrackedNames() =>
