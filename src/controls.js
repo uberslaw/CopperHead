@@ -161,16 +161,52 @@
     });
   });
 
-  window.addEventListener(
-    "wheel",
-    (event) => {
-      if (!settingsCache.fineTune) return;
-      event.preventDefault();
-      const direction = event.deltaY < 0 ? 1 : -1;
-      nudgeResolution(direction);
-    },
-    { passive: false }
-  );
+  // Mouse wheel and trackpad both zoom resolution (same as +/-).
+  // Trackpads send many small pixel deltas — accumulate to one step.
+  (() => {
+    let accum = 0;
+    const THRESHOLD = 40;
+
+    function normalizeDeltaY(event) {
+      let dy = event.deltaY;
+      if (event.deltaMode === 1) dy *= 16; // lines → px-ish
+      if (event.deltaMode === 2) dy *= 120; // pages
+      return dy;
+    }
+
+    function shouldZoomFromTarget(target) {
+      if (settingsCache.fineTune) return true;
+      if (!(target instanceof Element)) return false;
+      return Boolean(
+        target.closest(
+          ".zoom-row, .fine-tune-box, #lineCountSlider, #lineCountValue, .field-hint"
+        )
+      );
+    }
+
+    window.addEventListener(
+      "wheel",
+      (event) => {
+        if (!shouldZoomFromTarget(event.target)) return;
+        // Prefer vertical scroll; ignore mostly-horizontal trackpad pans.
+        if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+
+        event.preventDefault();
+        accum += normalizeDeltaY(event);
+
+        while (Math.abs(accum) >= THRESHOLD) {
+          if (accum < 0) {
+            accum += THRESHOLD;
+            nudgeResolution(1); // scroll/trackpad up → zoom in
+          } else {
+            accum -= THRESHOLD;
+            nudgeResolution(-1);
+          }
+        }
+      },
+      { passive: false }
+    );
+  })();
 
   thicknessSlider.addEventListener("input", () => {
     thicknessValue.textContent = `${Number(thicknessSlider.value).toFixed(1)} px`;

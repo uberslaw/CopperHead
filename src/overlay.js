@@ -560,21 +560,51 @@
     }
   });
 
-  window.addEventListener(
-    "wheel",
-    (event) => {
-      if (!state.fineTune) return;
-      event.preventDefault();
+  // Mouse wheel and trackpad both zoom resolution (same as +/- / fine-tune).
+  (() => {
+    let accum = 0;
+    const THRESHOLD = 40;
+
+    function normalizeDeltaY(event) {
+      let dy = event.deltaY;
+      if (event.deltaMode === 1) dy *= 16;
+      if (event.deltaMode === 2) dy *= 120;
+      return dy;
+    }
+
+    function nudge(direction) {
       const current = clampLineCount(state.lineCount);
-      const stepFactor = state.fineTuneStep === 0.001 ? 0.001 : 0.01;
-      const nextInteger = Math.floor(current) + 1;
-      const distance = Math.max(1e-6, nextInteger - current);
-      const direction = event.deltaY < 0 ? 1 : -1;
-      const next = clampLineCount(current + direction * stepFactor * distance);
-      api.updateSettings?.({ lineCount: next });
-    },
-    { passive: false }
-  );
+      let next;
+      if (state.fineTune) {
+        const stepFactor = state.fineTuneStep === 0.001 ? 0.001 : 0.01;
+        const nextInteger = Math.floor(current) + 1;
+        const distance = Math.max(1e-6, nextInteger - current);
+        next = current + direction * stepFactor * distance;
+      } else {
+        next = current + direction;
+      }
+      api.updateSettings?.({ lineCount: clampLineCount(next) });
+    }
+
+    window.addEventListener(
+      "wheel",
+      (event) => {
+        if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+        event.preventDefault();
+        accum += normalizeDeltaY(event);
+        while (Math.abs(accum) >= THRESHOLD) {
+          if (accum < 0) {
+            accum += THRESHOLD;
+            nudge(1);
+          } else {
+            accum -= THRESHOLD;
+            nudge(-1);
+          }
+        }
+      },
+      { passive: false }
+    );
+  })();
 
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
