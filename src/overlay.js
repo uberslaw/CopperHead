@@ -7,13 +7,14 @@
 
   const state = {
     mode: "pan",
-    spacing: 20,
+    lineCount: 1,
     thickness: 1,
     majorEvery: 5,
     gridColor: "#d9773a",
     majorColor: "#f0c49a",
     accentColor: "#ffe6c8",
-    showOrigin: true,
+    majorEnabled: true,
+    accentEnabled: true,
     stickyAxis: "x",
     useAutoPpi: true,
     ppiOverride: 96,
@@ -39,8 +40,34 @@
     return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
   }
 
-  function snapToGrid(value, spacing) {
-    return Math.round(value / spacing) * spacing;
+  function clampLineCount(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 1;
+    return Math.max(1, Math.min(1000, Math.round(n)));
+  }
+
+  /** Evenly spaced line positions: count lines across the axis. */
+  function linePositions(size, count) {
+    const n = clampLineCount(count);
+    const positions = [];
+    for (let i = 1; i <= n; i += 1) {
+      positions.push((i / (n + 1)) * size);
+    }
+    return positions;
+  }
+
+  function snapToNearestLine(value, size, count) {
+    const positions = linePositions(size, count);
+    let best = positions[0];
+    let bestDist = Math.abs(value - best);
+    for (let i = 1; i < positions.length; i += 1) {
+      const dist = Math.abs(value - positions[i]);
+      if (dist < bestDist) {
+        best = positions[i];
+        bestDist = dist;
+      }
+    }
+    return best;
   }
 
   function effectivePpi() {
@@ -67,13 +94,20 @@
     if (!settings) return;
     Object.assign(state, {
       mode: settings.mode ?? state.mode,
-      spacing: settings.spacing ?? state.spacing,
+      lineCount: clampLineCount(settings.lineCount ?? state.lineCount),
       thickness: settings.thickness ?? state.thickness,
       majorEvery: settings.majorEvery ?? state.majorEvery,
       gridColor: settings.gridColor ?? state.gridColor,
       majorColor: settings.majorColor ?? state.majorColor,
       accentColor: settings.accentColor ?? state.accentColor,
-      showOrigin: settings.showOrigin ?? state.showOrigin,
+      majorEnabled:
+        settings.majorEnabled !== undefined
+          ? !!settings.majorEnabled
+          : state.majorEnabled,
+      accentEnabled:
+        settings.accentEnabled !== undefined
+          ? !!settings.accentEnabled
+          : state.accentEnabled,
       stickyAxis: settings.stickyAxis ?? state.stickyAxis,
       useAutoPpi: settings.useAutoPpi ?? state.useAutoPpi,
       ppiOverride: settings.ppiOverride ?? state.ppiOverride,
@@ -122,7 +156,15 @@
   }
 
   function drawGrid(width, height) {
-    const { spacing, thickness, majorEvery, gridColor, majorColor } = state;
+    const {
+      lineCount,
+      thickness,
+      majorEvery,
+      gridColor,
+      majorColor,
+      majorEnabled,
+      accentEnabled,
+    } = state;
     ctx.clearRect(0, 0, width, height);
     // Keep enough alpha for Windows transparent-window hit testing
     ctx.fillStyle = "rgba(20, 16, 12, 0.06)";
@@ -130,32 +172,36 @@
 
     const minorWidth = thickness;
     const majorWidth = Math.max(thickness * 1.6, thickness + 0.5);
+    const xs = linePositions(width, lineCount);
+    const ys = linePositions(height, lineCount);
 
-    for (let x = 0, i = 0; x <= width + 0.5; x += spacing, i += 1) {
-      const isMajor = i % majorEvery === 0;
+    xs.forEach((x, index) => {
+      const lineNumber = index + 1;
+      const isMajor = majorEnabled && lineNumber % majorEvery === 0;
       ctx.beginPath();
       ctx.strokeStyle = isMajor
         ? hexToRgba(majorColor, 0.72)
-        : hexToRgba(gridColor, 0.45);
+        : hexToRgba(gridColor, 0.55);
       ctx.lineWidth = isMajor ? majorWidth : minorWidth;
       ctx.moveTo(Math.round(x) + 0.5, 0);
       ctx.lineTo(Math.round(x) + 0.5, height);
       ctx.stroke();
-    }
+    });
 
-    for (let y = 0, i = 0; y <= height + 0.5; y += spacing, i += 1) {
-      const isMajor = i % majorEvery === 0;
+    ys.forEach((y, index) => {
+      const lineNumber = index + 1;
+      const isMajor = majorEnabled && lineNumber % majorEvery === 0;
       ctx.beginPath();
       ctx.strokeStyle = isMajor
         ? hexToRgba(majorColor, 0.72)
-        : hexToRgba(gridColor, 0.45);
+        : hexToRgba(gridColor, 0.55);
       ctx.lineWidth = isMajor ? majorWidth : minorWidth;
       ctx.moveTo(0, Math.round(y) + 0.5);
       ctx.lineTo(width, Math.round(y) + 0.5);
       ctx.stroke();
-    }
+    });
 
-    if (state.showOrigin) {
+    if (accentEnabled) {
       const cx = Math.round(width / 2) + 0.5;
       const cy = Math.round(height / 2) + 0.5;
       ctx.beginPath();
@@ -444,10 +490,11 @@
       return;
     }
     if (state.mode === "sticky" && !state.stickyActive) {
+      const rect = canvas.getBoundingClientRect();
       state.stickyPreviewOffset =
         state.stickyAxis === "x"
-          ? snapToGrid(p.x, state.spacing)
-          : snapToGrid(p.y, state.spacing);
+          ? snapToNearestLine(p.x, rect.width, state.lineCount)
+          : snapToNearestLine(p.y, rect.height, state.lineCount);
       draw();
     }
   });
@@ -472,10 +519,11 @@
     }
 
     if (state.mode === "sticky") {
+      const rect = canvas.getBoundingClientRect();
       const offset =
         state.stickyAxis === "x"
-          ? snapToGrid(p.x, state.spacing)
-          : snapToGrid(p.y, state.spacing);
+          ? snapToNearestLine(p.x, rect.width, state.lineCount)
+          : snapToNearestLine(p.y, rect.height, state.lineCount);
       const guide = await api.setSticky({
         axis: state.stickyAxis,
         localOffset: offset,

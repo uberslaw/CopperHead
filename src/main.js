@@ -14,13 +14,14 @@ let stickyGuide = null;
 /** @type {Record<string, unknown>} */
 let sharedSettings = {
   mode: "pan",
-  spacing: 20,
+  lineCount: 1,
   thickness: 1,
   majorEvery: 5,
   gridColor: "#d9773a",
   majorColor: "#f0c49a",
   accentColor: "#ffe6c8",
-  showOrigin: true,
+  majorEnabled: true,
+  accentEnabled: true,
   stickyAxis: "x",
   useAutoPpi: true,
   ppiOverride: 96,
@@ -63,13 +64,59 @@ function placeOnWorkArea(win, preferred) {
   win.setBounds({ x: Math.round(x), y: Math.round(y), width, height }, false);
 }
 
+function placeControlBesideOverlay() {
+  if (!controlWindow) return;
+
+  const panelHeight = Math.min(
+    PANEL_HEIGHT,
+    screen.getPrimaryDisplay().workAreaSize.height - 40
+  );
+  controlWindow.setSize(PANEL_WIDTH, panelHeight);
+
+  if (!overlayWindow) {
+    placeOnWorkArea(controlWindow);
+    return;
+  }
+
+  const overlay = overlayWindow.getBounds();
+  const area = screen.getDisplayMatching(overlay).workArea;
+  const panel = controlWindow.getBounds();
+  const gap = 8;
+
+  let x = overlay.x + overlay.width + gap;
+  let y = overlay.y;
+
+  // Prefer right of grid; fall back to left if it won't fit.
+  if (x + panel.width > area.x + area.width) {
+    x = overlay.x - panel.width - gap;
+  }
+  if (x < area.x) x = area.x;
+  if (x + panel.width > area.x + area.width) {
+    x = area.x + area.width - panel.width;
+  }
+
+  if (y + panel.height > area.y + area.height) {
+    y = area.y + area.height - panel.height;
+  }
+  if (y < area.y) y = area.y;
+
+  controlWindow.setBounds(
+    {
+      x: Math.round(x),
+      y: Math.round(y),
+      width: panel.width,
+      height: panel.height,
+    },
+    false
+  );
+}
+
 function resetControlPanel() {
   if (!controlWindow) {
     createControlWindow();
     return;
   }
-  controlWindow.setSize(PANEL_WIDTH, Math.min(PANEL_HEIGHT, screen.getPrimaryDisplay().workAreaSize.height - 40));
-  placeOnWorkArea(controlWindow);
+  placeControlBesideOverlay();
   controlWindow.show();
   controlWindow.focus();
   controlWindow.setAlwaysOnTop(true, "screen-saver");
@@ -142,14 +189,19 @@ function createControlWindow() {
   const display = screen.getPrimaryDisplay();
   const area = display.workArea;
   const height = Math.min(PANEL_HEIGHT, area.height - 40);
+  const overlay = overlayWindow?.getBounds();
+  const startX = overlay
+    ? Math.round(overlay.x + overlay.width + 8)
+    : Math.round(area.x + area.width - PANEL_WIDTH - 24);
+  const startY = overlay ? Math.round(overlay.y) : Math.round(area.y + 24);
 
   controlWindow = new BrowserWindow({
     width: PANEL_WIDTH,
     height,
     minWidth: 280,
     minHeight: 360,
-    x: Math.round(area.x + area.width - PANEL_WIDTH - 24),
-    y: Math.round(area.y + 24),
+    x: startX,
+    y: startY,
     frame: false,
     transparent: false,
     alwaysOnTop: true,
@@ -170,6 +222,7 @@ function createControlWindow() {
 
   controlWindow.setAlwaysOnTop(true, "screen-saver");
   controlWindow.loadFile(path.join(__dirname, "controls.html"));
+  placeControlBesideOverlay();
 
   controlWindow.on("closed", () => {
     controlWindow = null;

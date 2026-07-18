@@ -7,19 +7,21 @@
   const dpiNote = document.getElementById("dpiNote");
   const measureReadout = document.getElementById("measureReadout");
 
-  const spacingSlider = document.getElementById("spacingSlider");
+  const lineCountSlider = document.getElementById("lineCountSlider");
   const thicknessSlider = document.getElementById("thicknessSlider");
   const majorEverySlider = document.getElementById("majorEverySlider");
+  const majorEveryField = document.getElementById("majorEveryField");
   const ppiSlider = document.getElementById("ppiSlider");
   const useAutoPpi = document.getElementById("useAutoPpi");
   const gridColorInput = document.getElementById("gridColor");
   const majorColorInput = document.getElementById("majorColor");
   const accentColorInput = document.getElementById("accentColor");
-  const showOrigin = document.getElementById("showOrigin");
+  const toggleMajor = document.getElementById("toggleMajor");
+  const toggleAccent = document.getElementById("toggleAccent");
   const alwaysOnTop = document.getElementById("alwaysOnTop");
   const clickThrough = document.getElementById("clickThrough");
 
-  const spacingValue = document.getElementById("spacingValue");
+  const lineCountValue = document.getElementById("lineCountValue");
   const thicknessValue = document.getElementById("thicknessValue");
   const majorEveryValue = document.getElementById("majorEveryValue");
   const ppiValue = document.getElementById("ppiValue");
@@ -32,38 +34,46 @@
       "Pick Vertical or Horizontal, then click a gridline on the overlay to pin it to the screen.",
   };
 
+  function lineLabel(count) {
+    const n = Number(count) || 1;
+    return n === 1 ? "1 line" : `${n} lines`;
+  }
+
   function syncLabels(settings) {
-    spacingSlider.value = String(settings.spacing);
+    lineCountSlider.value = String(settings.lineCount ?? 1);
     thicknessSlider.value = String(settings.thickness);
     majorEverySlider.value = String(settings.majorEvery);
     gridColorInput.value = settings.gridColor;
     majorColorInput.value = settings.majorColor;
     accentColorInput.value = settings.accentColor;
-    showOrigin.checked = !!settings.showOrigin;
     alwaysOnTop.checked = !!settings.alwaysOnTop;
     clickThrough.checked = !!settings.clickThrough;
     useAutoPpi.checked = !!settings.useAutoPpi;
     ppiSlider.value = String(settings.ppiOverride);
     ppiSlider.disabled = !!settings.useAutoPpi;
 
-    spacingValue.textContent = `${settings.spacing} px`;
+    lineCountValue.textContent = lineLabel(settings.lineCount);
     thicknessValue.textContent = `${Number(settings.thickness).toFixed(1)} px`;
     majorEveryValue.textContent = `${settings.majorEvery} lines`;
     ppiValue.textContent = settings.useAutoPpi
       ? "auto"
       : `${settings.ppiOverride} PPI`;
 
+    const majorOn = settings.majorEnabled !== false;
+    const accentOn = settings.accentEnabled !== false;
+    toggleMajor.setAttribute("aria-pressed", majorOn ? "true" : "false");
+    toggleAccent.setAttribute("aria-pressed", accentOn ? "true" : "false");
+    majorEveryField.classList.toggle("is-disabled", !majorOn);
+
     document.querySelectorAll(".mode-btn[data-mode]").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.mode === settings.mode);
     });
-    document.getElementById("stickyAxisX").classList.toggle(
-      "active",
-      settings.stickyAxis === "x"
-    );
-    document.getElementById("stickyAxisY").classList.toggle(
-      "active",
-      settings.stickyAxis === "y"
-    );
+    document
+      .getElementById("stickyAxisX")
+      .classList.toggle("active", settings.stickyAxis === "x");
+    document
+      .getElementById("stickyAxisY")
+      .classList.toggle("active", settings.stickyAxis === "y");
     modeHelp.textContent = MODE_HELP[settings.mode] || MODE_HELP.pan;
   }
 
@@ -75,9 +85,9 @@
     btn.addEventListener("click", () => patch({ mode: btn.dataset.mode }));
   });
 
-  spacingSlider.addEventListener("input", () => {
-    spacingValue.textContent = `${spacingSlider.value} px`;
-    patch({ spacing: Number(spacingSlider.value) });
+  lineCountSlider.addEventListener("input", () => {
+    lineCountValue.textContent = lineLabel(lineCountSlider.value);
+    patch({ lineCount: Number(lineCountSlider.value) });
   });
 
   thicknessSlider.addEventListener("input", () => {
@@ -99,9 +109,17 @@
   accentColorInput.addEventListener("input", () =>
     patch({ accentColor: accentColorInput.value })
   );
-  showOrigin.addEventListener("change", () =>
-    patch({ showOrigin: showOrigin.checked })
-  );
+
+  toggleMajor.addEventListener("click", () => {
+    const next = toggleMajor.getAttribute("aria-pressed") !== "true";
+    patch({ majorEnabled: next });
+  });
+
+  toggleAccent.addEventListener("click", () => {
+    const next = toggleAccent.getAttribute("aria-pressed") !== "true";
+    patch({ accentEnabled: next });
+  });
+
   alwaysOnTop.addEventListener("change", () =>
     patch({ alwaysOnTop: alwaysOnTop.checked })
   );
