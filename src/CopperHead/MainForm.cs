@@ -189,9 +189,9 @@ public sealed class MainForm : Form
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(BuildRoutesTab());
+        tabs.TabPages.Add(BuildTrafficTab());
         tabs.TabPages.Add(BuildProcessesTab());
         tabs.TabPages.Add(BuildDiscoverTab());
-        tabs.TabPages.Add(BuildTrafficTab());
         tabs.TabPages.Add(BuildLogsTab());
 
         var footer = new Label
@@ -530,11 +530,11 @@ public sealed class MainForm : Form
     {
         void addCols(ListView lv)
         {
-            lv.Columns.Add("Host", 160);
-            lv.Columns.Add("IP", 110);
-            lv.Columns.Add("Port", 50);
-            lv.Columns.Add("Country", 60);
-            lv.Columns.Add("ASN", 160);
+            lv.Columns.Add("Host", 150);
+            lv.Columns.Add("IP", 105);
+            lv.Columns.Add("Port", 48);
+            lv.Columns.Add("Country", 70);
+            lv.Columns.Add("ASN", 180);
             lv.Columns.Add("Process", 90);
             lv.Columns.Add("PID", 55);
             lv.ColumnClick += (_, e) =>
@@ -558,11 +558,11 @@ public sealed class MainForm : Form
     {
         _trafficList.OwnerDraw = true;
         _trafficList.Columns.Add(CenterCol("★", 36));
-        _trafficList.Columns.Add(CenterCol("IP", 110));
-        _trafficList.Columns.Add(CenterCol("Port", 50));
-        _trafficList.Columns.Add(CenterCol("Host", 130));
-        _trafficList.Columns.Add(CenterCol("Country", 55));
-        _trafficList.Columns.Add(CenterCol("ASN", 140));
+        _trafficList.Columns.Add(CenterCol("IP", 105));
+        _trafficList.Columns.Add(CenterCol("Port", 48));
+        _trafficList.Columns.Add(CenterCol("Host", 120));
+        _trafficList.Columns.Add(CenterCol("Country", 70));
+        _trafficList.Columns.Add(CenterCol("ASN", 160));
         _trafficList.Columns.Add(CenterCol("TX/s", 75));
         _trafficList.Columns.Add(CenterCol("RX/s", 75));
         _trafficList.Columns.Add(CenterCol("Session TX", 85));
