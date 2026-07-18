@@ -49,7 +49,7 @@
         </div>
       </details>
 
-      <details class="panel-section">
+      <details class="panel-section" open>
         <summary>Grid</summary>
         <div class="section-body">
           <label class="field">
@@ -61,11 +61,11 @@
               type="range"
               id="lineCountSlider"
               min="1"
-              max="1000"
+              max="250"
               step="1"
               value="1"
             />
-            <span class="field-hint">1 = 1 vertical + 1 horizontal · up to 1000 of each</span>
+            <span class="field-hint">1 = 1 vertical + 1 horizontal · up to 250 of each</span>
           </label>
 
           <label class="field">
@@ -81,6 +81,22 @@
               step="0.5"
               value="1"
             />
+          </label>
+
+          <label class="field">
+            <span class="field-label">
+              Line completeness
+              <strong id="lineBreakValue">Solid</strong>
+            </span>
+            <input
+              type="range"
+              id="lineBreakSlider"
+              min="0"
+              max="8"
+              step="1"
+              value="0"
+            />
+            <span class="field-hint">Solid → half → quarter … down to 1px dots with 1px gaps</span>
           </label>
 
           <div class="color-row">

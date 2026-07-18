@@ -52,6 +52,7 @@
   function syncLabels(settings) {
     lineCountSlider.value = String(settings.lineCount ?? 1);
     thicknessSlider.value = String(settings.thickness);
+    lineBreakSlider.value = String(settings.lineBreak ?? 0);
     majorEverySlider.value = String(settings.majorEvery);
     gridColorInput.value = settings.gridColor;
     majorColorInput.value = settings.majorColor;
@@ -64,6 +65,7 @@
 
     lineCountValue.textContent = lineLabel(settings.lineCount);
     thicknessValue.textContent = `${Number(settings.thickness).toFixed(1)} px`;
+    lineBreakValue.textContent = breakLabel(settings.lineBreak);
     majorEveryValue.textContent = `${settings.majorEvery} lines`;
     ppiValue.textContent = settings.useAutoPpi
       ? "auto"
@@ -103,6 +105,11 @@
   thicknessSlider.addEventListener("input", () => {
     thicknessValue.textContent = `${Number(thicknessSlider.value).toFixed(1)} px`;
     patch({ thickness: Number(thicknessSlider.value) });
+  });
+
+  lineBreakSlider.addEventListener("input", () => {
+    lineBreakValue.textContent = breakLabel(lineBreakSlider.value);
+    patch({ lineBreak: Number(lineBreakSlider.value) });
   });
 
   majorEverySlider.addEventListener("input", () => {
