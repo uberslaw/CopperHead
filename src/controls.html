@@ -233,6 +233,16 @@
             <input type="checkbox" id="clickThrough" />
             <span>Click-through grid (Ctrl+Shift+G)</span>
           </label>
+          <label class="toggle">
+            <input type="checkbox" id="overlayMinimized" />
+            <span>Minimize grid window</span>
+          </label>
+          <button type="button" class="btn hold-hide-btn" id="btnHoldHide">
+            Hold to hide grid
+          </button>
+          <p class="field-hint">
+            Press and hold this button (or hold <strong>Z</strong>) to peek under the grid; release to show it again.
+          </p>
           <button type="button" class="btn ghost" id="btnResetPanelBottom">
             Reset panel beside grid
           </button>
@@ -248,6 +258,7 @@
         <div class="section-body">
           <div class="shortcut-list">
             <div><kbd>Ctrl</kbd>+drag grid</div><div>Move overlay</div>
+            <div><kbd>Z</kbd> (hold)</div><div>Hide grid while held</div>
             <div><kbd>+</kbd> / <kbd>−</kbd></div><div>Zoom resolution in / out</div>
             <div><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd></div><div>Toggle click-through</div>
             <div><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd></div><div>Reset controls panel</div>

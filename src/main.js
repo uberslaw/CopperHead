@@ -48,6 +48,14 @@ let sharedSettings = {
   ppiOverride: 96,
   alwaysOnTop: true,
   clickThrough: false,
+  overlayMinimized: false, // checkbox: keep grid hidden while ticked
+};
+
+/** Momentary / pinned hide reasons for the overlay window. */
+const overlayHide = {
+  pinned: false,
+  hold: false,
+  z: false,
 };
 
 const OVERLAY_MIN_WIDTH = 200;
@@ -176,6 +184,11 @@ function createOverlayWindow() {
 
   overlayWindow.setAlwaysOnTop(true, "screen-saver");
   overlayWindow.loadFile(path.join(__dirname, "overlay.html"));
+  wirePeekKeys(overlayWindow);
+  if (sharedSettings.overlayMinimized) {
+    overlayHide.pinned = true;
+    syncOverlayVisibility();
+  }
 
   overlayWindow.on("will-move", (event, newBounds) => {
     if (!stickyGuide || !overlayWindow) return;
@@ -244,6 +257,7 @@ function createControlWindow() {
   controlWindow.setAlwaysOnTop(true, "screen-saver");
   controlWindow.loadFile(path.join(__dirname, "controls.html"));
   placeControlBesideOverlay();
+  wirePeekKeys(controlWindow);
 
   controlWindow.on("closed", () => {
     controlWindow = null;
@@ -432,6 +446,9 @@ ipcMain.handle("settings:update", (_event, patch) => {
       overlayWindow.setIgnoreMouseEvents(false);
     }
   }
+  if ("overlayMinimized" in patch) {
+    setOverlayHideReason("pinned", !!sharedSettings.overlayMinimized);
+  }
   broadcastSettings();
   return { ...sharedSettings };
 });
@@ -452,6 +469,53 @@ function applyClickThrough(enabled) {
     }
   }
   broadcastSettings();
+}
+
+function isOverlaySuppressed() {
+  return overlayHide.pinned || overlayHide.hold || overlayHide.z;
+}
+
+function syncOverlayVisibility() {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return isOverlaySuppressed();
+  const hide = isOverlaySuppressed();
+  if (hide) {
+    if (overlayWindow.isVisible()) overlayWindow.hide();
+  } else if (!overlayWindow.isVisible()) {
+    overlayWindow.show();
+    if (sharedSettings.alwaysOnTop) {
+      overlayWindow.setAlwaysOnTop(true, "screen-saver");
+    }
+  }
+  controlWindow?.webContents.send("overlay:visibility", {
+    hidden: hide,
+    reasons: { ...overlayHide },
+  });
+  return hide;
+}
+
+function setOverlayHideReason(reason, active) {
+  if (!(reason in overlayHide)) return isOverlaySuppressed();
+  overlayHide[reason] = Boolean(active);
+  if (reason === "pinned") {
+    sharedSettings.overlayMinimized = overlayHide.pinned;
+    broadcastSettings();
+  }
+  return syncOverlayVisibility();
+}
+
+function wirePeekKeys(win) {
+  if (!win) return;
+  win.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown" && input.type !== "keyUp") return;
+    if (input.key?.toLowerCase() !== "z") return;
+    // Ignore when typing into fields / with modifiers
+    if (input.control || input.alt || input.meta) return;
+    if (input.type === "keyDown" && !input.isAutoRepeat) {
+      setOverlayHideReason("z", true);
+    } else if (input.type === "keyUp") {
+      setOverlayHideReason("z", false);
+    }
+  });
 }
 
 function nudgeLineCount(direction) {
@@ -652,6 +716,19 @@ ipcMain.handle("window:set-ignore-mouse-events", (event, ignore, options) => {
   win.setIgnoreMouseEvents(Boolean(ignore), options || { forward: true });
 });
 
+ipcMain.handle("overlay:hold-hide", (_event, active) => {
+  return setOverlayHideReason("hold", !!active);
+});
+
+ipcMain.handle("overlay:set-minimized", (_event, minimized) => {
+  return setOverlayHideReason("pinned", !!minimized);
+});
+
+ipcMain.handle("overlay:visibility-get", () => ({
+  hidden: isOverlaySuppressed(),
+  reasons: { ...overlayHide },
+}));
+
 ipcMain.handle("panel:reset", () => {
   resetControlPanel();
   return true;
@@ -766,6 +843,7 @@ function createIncrementWindow() {
 
   incrementWindow.setAlwaysOnTop(true, "screen-saver");
   incrementWindow.loadFile(path.join(__dirname, "increments.html"));
+  wirePeekKeys(incrementWindow);
   incrementWindow.on("closed", () => {
     incrementWindow = null;
   });

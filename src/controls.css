@@ -398,6 +398,23 @@ input[type="range"] {
   font-size: 10px;
 }
 
+.hold-hide-btn {
+  width: 100%;
+  margin-top: 8px;
+  user-select: none;
+  touch-action: none;
+}
+
+.hold-hide-btn.is-pressed {
+  border-color: var(--accent);
+  background: rgba(217, 119, 58, 0.28);
+  color: var(--accent-soft);
+}
+
+body.grid-hidden .hold-hide-btn {
+  border-color: var(--ok, #8fad6e);
+}
+
 .toggle {
   display: flex;
   align-items: center;

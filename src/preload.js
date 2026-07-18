@@ -33,6 +33,16 @@ contextBridge.exposeInMainWorld("gridFinder", {
     ipcRenderer.invoke("window:set-ignore-mouse-events", ignore, options),
   resetPanel: () => ipcRenderer.invoke("panel:reset"),
   showPanel: () => ipcRenderer.invoke("panel:show"),
+  holdHideOverlay: (active) => ipcRenderer.invoke("overlay:hold-hide", active),
+  setOverlayMinimized: (minimized) =>
+    ipcRenderer.invoke("overlay:set-minimized", minimized),
+  getOverlayVisibility: () => ipcRenderer.invoke("overlay:visibility-get"),
+  onOverlayVisibility: (handler) => {
+    const listener = (_event, status) => handler(status);
+    ipcRenderer.on("overlay:visibility", listener);
+    return () => ipcRenderer.removeListener("overlay:visibility", listener);
+  },
+
   applyPortion: (spec) => ipcRenderer.invoke("layout:portion", spec),
   dock: (edge) => ipcRenderer.invoke("layout:dock", edge),
   grow: (direction) => ipcRenderer.invoke("layout:grow", direction),

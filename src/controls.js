@@ -21,6 +21,8 @@
   const toggleAccent = document.getElementById("toggleAccent");
   const alwaysOnTop = document.getElementById("alwaysOnTop");
   const clickThrough = document.getElementById("clickThrough");
+  const overlayMinimized = document.getElementById("overlayMinimized");
+  const btnHoldHide = document.getElementById("btnHoldHide");
   const btnFineTune = document.getElementById("btnFineTune");
   const fineTuneSteps = document.getElementById("fineTuneSteps");
 
@@ -73,6 +75,7 @@
     accentColorInput.value = settings.accentColor;
     alwaysOnTop.checked = !!settings.alwaysOnTop;
     clickThrough.checked = !!settings.clickThrough;
+    overlayMinimized.checked = !!settings.overlayMinimized;
     useAutoPpi.checked = !!settings.useAutoPpi;
     ppiSlider.value = String(settings.ppiOverride);
     ppiSlider.disabled = !!settings.useAutoPpi;
@@ -210,6 +213,53 @@
   clickThrough.addEventListener("change", () =>
     patch({ clickThrough: clickThrough.checked })
   );
+
+  overlayMinimized.addEventListener("change", () => {
+    patch({ overlayMinimized: overlayMinimized.checked });
+    api.setOverlayMinimized?.(overlayMinimized.checked);
+  });
+
+  // Hold-to-hide: pointer capture so release outside the button still restores.
+  (() => {
+    let holding = false;
+    const start = async (event) => {
+      event.preventDefault();
+      holding = true;
+      btnHoldHide.classList.add("is-pressed");
+      try {
+        btnHoldHide.setPointerCapture?.(event.pointerId);
+      } catch (_) {
+        /* ignore */
+      }
+      await api.holdHideOverlay?.(true);
+    };
+    const end = async (event) => {
+      if (!holding) return;
+      holding = false;
+      btnHoldHide.classList.remove("is-pressed");
+      try {
+        if (event?.pointerId != null) {
+          btnHoldHide.releasePointerCapture?.(event.pointerId);
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      await api.holdHideOverlay?.(false);
+    };
+    btnHoldHide.addEventListener("pointerdown", start);
+    btnHoldHide.addEventListener("pointerup", end);
+    btnHoldHide.addEventListener("pointercancel", end);
+    btnHoldHide.addEventListener("lostpointercapture", () => {
+      if (!holding) return;
+      holding = false;
+      btnHoldHide.classList.remove("is-pressed");
+      api.holdHideOverlay?.(false);
+    });
+  })();
+
+  api.onOverlayVisibility?.((status) => {
+    document.body.classList.toggle("grid-hidden", !!status?.hidden);
+  });
 
   ppiSlider.addEventListener("input", () => {
     ppiValue.textContent = `${ppiSlider.value} PPI`;
