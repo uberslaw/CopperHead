@@ -55,8 +55,24 @@ public sealed class MainForm : Form
     private bool _processSortAsc = true;
 
     // Discover tab
-    private readonly ListBox _newDiscoveries = new() { Dock = DockStyle.Fill, IntegralHeight = false, SelectionMode = SelectionMode.MultiExtended };
-    private readonly ListBox _prevDiscoveries = new() { Dock = DockStyle.Fill, IntegralHeight = false, SelectionMode = SelectionMode.MultiExtended };
+    private readonly ListView _newDiscoveries = new()
+    {
+        Dock = DockStyle.Fill,
+        View = View.Details,
+        FullRowSelect = true,
+        GridLines = true,
+        MultiSelect = true,
+        HideSelection = false,
+    };
+    private readonly ListView _prevDiscoveries = new()
+    {
+        Dock = DockStyle.Fill,
+        View = View.Details,
+        FullRowSelect = true,
+        GridLines = true,
+        MultiSelect = true,
+        HideSelection = false,
+    };
     private readonly Button _scanNow = new() { Text = "Scan now", AutoSize = true };
     private readonly Button _watchDiscover = new() { Text = "Watch", AutoSize = true };
     private readonly Button _stopWatchDiscover = new() { Text = "Stop watch", AutoSize = true, Enabled = false };
@@ -67,6 +83,8 @@ public sealed class MainForm : Form
     private readonly TextBox _hostListUrl = new() { Dock = DockStyle.Fill, PlaceholderText = "https://raw.githubusercontent.com/.../hosts.txt" };
     private readonly Button _fetchList = new() { Text = "Fetch list", AutoSize = true };
     private readonly Label _discoverStatus = new() { Text = "Idle", AutoSize = true, Padding = new Padding(8, 6, 0, 0) };
+    private int _discoverSortColumn; // Host
+    private bool _discoverSortAsc = true;
 
     // Logs tab
     private readonly ListView _logSessions = new()
@@ -108,7 +126,7 @@ public sealed class MainForm : Form
     private readonly HashSet<string> _knownBeforeSession = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _sessionNewKeys = new(StringComparer.OrdinalIgnoreCase);
     private List<TrafficRow> _trafficRows = [];
-    private int _trafficSortColumn = 8; // All time TX
+    private int _trafficSortColumn = 10; // All time TX (after Country/ASN cols)
     private bool _trafficSortAsc; // false = descending
     private bool _couplingMonitors;
     private string _activeProcessKey = "";
@@ -163,6 +181,8 @@ public sealed class MainForm : Form
 
         InitTrafficList();
 
+        InitDiscoverLists();
+
         InitLogSessionsList();
 
         InitProcessList();
@@ -178,7 +198,7 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Bottom,
             Height = 28,
-            Text = "CopperHead · Admin required · TCP table / ESTATS (no injection) · Stop clears managed routes",
+            Text = "CopperHead · Admin required · TCP table / ESTATS / Team Cymru geo (no injection) · Stop clears managed routes",
             ForeColor = Color.DimGray,
             Padding = new Padding(10, 6, 10, 0),
         };
@@ -506,19 +526,49 @@ public sealed class MainForm : Form
         return page;
     }
 
+    private void InitDiscoverLists()
+    {
+        void addCols(ListView lv)
+        {
+            lv.Columns.Add("Host", 160);
+            lv.Columns.Add("IP", 110);
+            lv.Columns.Add("Port", 50);
+            lv.Columns.Add("Country", 60);
+            lv.Columns.Add("ASN", 160);
+            lv.Columns.Add("Process", 90);
+            lv.Columns.Add("PID", 55);
+            lv.ColumnClick += (_, e) =>
+            {
+                if (_discoverSortColumn == e.Column)
+                    _discoverSortAsc = !_discoverSortAsc;
+                else
+                {
+                    _discoverSortColumn = e.Column;
+                    _discoverSortAsc = e.Column is not 2 and not 6; // Port/PID default desc
+                }
+                RefreshDiscoveryList();
+            };
+        }
+
+        addCols(_newDiscoveries);
+        addCols(_prevDiscoveries);
+    }
+
     private void InitTrafficList()
     {
         _trafficList.OwnerDraw = true;
         _trafficList.Columns.Add(CenterCol("★", 36));
-        _trafficList.Columns.Add(CenterCol("IP", 120));
-        _trafficList.Columns.Add(CenterCol("Port", 55));
-        _trafficList.Columns.Add(CenterCol("Host", 140));
-        _trafficList.Columns.Add(CenterCol("TX/s", 80));
-        _trafficList.Columns.Add(CenterCol("RX/s", 80));
-        _trafficList.Columns.Add(CenterCol("Session TX", 90));
-        _trafficList.Columns.Add(CenterCol("Session RX", 90));
-        _trafficList.Columns.Add(CenterCol("All time TX", 90));
-        _trafficList.Columns.Add(CenterCol("All time RX", 90));
+        _trafficList.Columns.Add(CenterCol("IP", 110));
+        _trafficList.Columns.Add(CenterCol("Port", 50));
+        _trafficList.Columns.Add(CenterCol("Host", 130));
+        _trafficList.Columns.Add(CenterCol("Country", 55));
+        _trafficList.Columns.Add(CenterCol("ASN", 140));
+        _trafficList.Columns.Add(CenterCol("TX/s", 75));
+        _trafficList.Columns.Add(CenterCol("RX/s", 75));
+        _trafficList.Columns.Add(CenterCol("Session TX", 85));
+        _trafficList.Columns.Add(CenterCol("Session RX", 85));
+        _trafficList.Columns.Add(CenterCol("All time TX", 85));
+        _trafficList.Columns.Add(CenterCol("All time RX", 85));
 
         _trafficList.DrawColumnHeader += (_, e) =>
         {
@@ -559,7 +609,7 @@ public sealed class MainForm : Form
             {
                 _trafficSortColumn = e.Column;
                 // Text columns start ascending; numeric/rates/totals start descending
-                _trafficSortAsc = e.Column is 1 or 2 or 3;
+                _trafficSortAsc = e.Column is 1 or 3 or 4 or 5;
             }
             RefreshTrafficList();
             SaveConfig();
@@ -586,7 +636,7 @@ public sealed class MainForm : Form
 
         root.Controls.Add(new Label
         {
-            Text = "Live TCP byte rates for processes listed on Discover (ESTATS). Click headers to sort. Double-click or Pin to keep favourites on top.",
+            Text = "Live TCP byte rates for processes listed on Discover (ESTATS). Country/ASN via Team Cymru DNS. Click headers to sort. Double-click or Pin favourites.",
             AutoSize = true,
             Padding = new Padding(0, 0, 0, 4),
         }, 0, 0);
@@ -686,17 +736,11 @@ public sealed class MainForm : Form
         _autoAdd.Checked = config.AutoAddDiscoveries;
         _discoverInterval.Value = Math.Clamp(config.DiscoverSeconds <= 0 ? 15 : config.DiscoverSeconds, 5, 600);
         _traffic.SetPinned(config.PinnedTrafficKeys ?? []);
-        // Migrate old combined-column indexes / default to All time TX desc
-        _trafficSortColumn = config.TrafficSortColumn is >= 0 and <= 9
-            ? config.TrafficSortColumn
-            : 8;
-        if (config.TrafficSortColumn is 6 or 7 && config.TrafficSortAsc == false &&
-            config.PinnedTrafficKeys is not null)
-        {
-            // Older builds used 6/7 as combined session/all-time — prefer All time TX
-            if (config.TrafficSortColumn == 7)
-                _trafficSortColumn = 8;
-        }
+        var sortCol = config.TrafficSortColumn;
+        // Pre-geo layout had 10 columns; Country/ASN inserted at indexes 4–5.
+        if (config.TrafficColumnSchema < 1 && sortCol is >= 4 and <= 9)
+            sortCol += 2;
+        _trafficSortColumn = sortCol is >= 0 and <= 11 ? sortCol : 10;
         _trafficSortAsc = config.TrafficSortAsc;
 
         if (!string.IsNullOrWhiteSpace(config.AdapterName))
@@ -730,6 +774,7 @@ public sealed class MainForm : Form
             PinnedTrafficKeys = _traffic.PinnedKeys.ToList(),
             TrafficSortColumn = _trafficSortColumn,
             TrafficSortAsc = _trafficSortAsc,
+            TrafficColumnSchema = 1,
         };
     }
 
@@ -763,15 +808,27 @@ public sealed class MainForm : Form
         _sessionNewKeys.Clear();
         _discovered.Clear();
         // Seed previously discovered from known memory
+        var seedIps = new List<System.Net.IPAddress>();
+        foreach (var k in _knownBeforeSession)
+        {
+            if (System.Net.IPAddress.TryParse(k, out var ip) &&
+                ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                seedIps.Add(ip);
+        }
+        IpGeoLookup.LookupMany(seedIps);
+
         foreach (var k in _knownBeforeSession)
         {
             var isIp = System.Net.IPAddress.TryParse(k, out var ip);
+            var geo = isIp ? IpGeoLookup.Lookup(ip!) : IpGeoInfo.Empty;
             _discovered[k] = new DiscoveredEndpoint(
                 "stored",
                 0,
                 isIp ? ip! : System.Net.IPAddress.Any,
                 0,
-                isIp ? null : k);
+                isIp ? null : k,
+                geo.CountryDisplay,
+                geo.AsnDisplay);
         }
 
         RefreshDiscoveryList();
@@ -989,6 +1046,8 @@ public sealed class MainForm : Form
                         ip = item.RemoteAddress.ToString(),
                         port = item.RemotePort,
                         host = item.Hostname,
+                        country = item.CountryCode,
+                        asn = item.AsnLabel,
                         process = item.ProcessName,
                     });
                 }
@@ -1015,29 +1074,66 @@ public sealed class MainForm : Form
 
     private void RefreshDiscoveryList()
     {
-        var newItems = _discovered.Values
-            .Where(v => _sessionNewKeys.Contains(v.DisplayKey))
-            .OrderBy(v => v.ToString(), StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var newItems = SortDiscoveries(
+            _discovered.Values.Where(v => _sessionNewKeys.Contains(v.DisplayKey))).ToList();
 
-        var prevItems = _discovered.Values
-            .Where(v => _knownBeforeSession.Contains(v.DisplayKey) && !_sessionNewKeys.Contains(v.DisplayKey))
-            .OrderBy(v => v.ToString(), StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var prevItems = SortDiscoveries(
+            _discovered.Values.Where(v =>
+                _knownBeforeSession.Contains(v.DisplayKey) && !_sessionNewKeys.Contains(v.DisplayKey))).ToList();
 
-        // Also show known keys that aren't in _discovered as plain strings via synthetic entries already seeded
+        FillDiscoveryList(_newDiscoveries, newItems);
+        FillDiscoveryList(_prevDiscoveries, prevItems);
+    }
 
-        _newDiscoveries.BeginUpdate();
-        _newDiscoveries.Items.Clear();
-        foreach (var item in newItems)
-            _newDiscoveries.Items.Add(item);
-        _newDiscoveries.EndUpdate();
+    private static void FillDiscoveryList(ListView lv, IEnumerable<DiscoveredEndpoint> items)
+    {
+        var selected = lv.SelectedItems
+            .Cast<ListViewItem>()
+            .Select(i => (i.Tag as DiscoveredEndpoint)?.DisplayKey)
+            .Where(k => k is not null)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase)!;
 
-        _prevDiscoveries.BeginUpdate();
-        _prevDiscoveries.Items.Clear();
-        foreach (var item in prevItems)
-            _prevDiscoveries.Items.Add(item);
-        _prevDiscoveries.EndUpdate();
+        lv.BeginUpdate();
+        lv.Items.Clear();
+        foreach (var ep in items)
+        {
+            var host = ep.Hostname ?? "";
+            var ipText = ep.RemoteAddress.Equals(System.Net.IPAddress.Any)
+                ? ""
+                : ep.RemoteAddress.ToString();
+            var item = new ListViewItem(host.Length > 0 ? host : ipText) { Tag = ep };
+            item.SubItems.Add(ipText);
+            item.SubItems.Add(ep.RemotePort > 0 ? ep.RemotePort.ToString() : "");
+            item.SubItems.Add(ep.CountryCode);
+            item.SubItems.Add(ep.AsnLabel);
+            item.SubItems.Add(ep.ProcessId == 0 ? "" : ep.ProcessName);
+            item.SubItems.Add(ep.ProcessId > 0 ? ep.ProcessId.ToString() : "");
+            if (ep.ProcessId == 0)
+                item.ForeColor = Color.Gray;
+            lv.Items.Add(item);
+            if (selected.Contains(ep.DisplayKey))
+                item.Selected = true;
+        }
+        lv.EndUpdate();
+    }
+
+    private IEnumerable<DiscoveredEndpoint> SortDiscoveries(IEnumerable<DiscoveredEndpoint> rows)
+    {
+        Func<DiscoveredEndpoint, IComparable> key = _discoverSortColumn switch
+        {
+            0 => r => r.Hostname ?? r.RemoteAddress.ToString(),
+            1 => r => r.RemoteAddress.ToString(),
+            2 => r => r.RemotePort,
+            3 => r => r.CountryCode,
+            4 => r => r.AsnLabel,
+            5 => r => r.ProcessName,
+            6 => r => r.ProcessId,
+            _ => r => r.Hostname ?? r.RemoteAddress.ToString(),
+        };
+
+        return _discoverSortAsc
+            ? rows.OrderBy(key)
+            : rows.OrderByDescending(key);
     }
 
     private void EnsureHostLine(string hostOrIp)
@@ -1058,8 +1154,11 @@ public sealed class MainForm : Form
         IEnumerable<DiscoveredEndpoint> items;
         if (selectedOnly)
         {
-            items = _newDiscoveries.SelectedItems.Cast<DiscoveredEndpoint>()
-                .Concat(_prevDiscoveries.SelectedItems.Cast<DiscoveredEndpoint>());
+            items = _newDiscoveries.SelectedItems.Cast<ListViewItem>()
+                .Concat(_prevDiscoveries.SelectedItems.Cast<ListViewItem>())
+                .Select(i => i.Tag as DiscoveredEndpoint)
+                .Where(e => e is not null)
+                .Select(e => e!);
         }
         else if (newOnly)
         {
@@ -1429,6 +1528,8 @@ public sealed class MainForm : Form
             item.SubItems.Add(row.Ip);
             item.SubItems.Add(row.Port.ToString());
             item.SubItems.Add(row.Hostname ?? "");
+            item.SubItems.Add(row.CountryCode);
+            item.SubItems.Add(row.AsnLabel);
             item.SubItems.Add(FormatRate(row.TxPerSec));
             item.SubItems.Add(FormatRate(row.RxPerSec));
             item.SubItems.Add(FormatBytes(row.SessionTx));
@@ -1464,21 +1565,27 @@ public sealed class MainForm : Form
                 ? ordered.ThenBy(r => r.Hostname ?? "", StringComparer.OrdinalIgnoreCase)
                 : ordered.ThenByDescending(r => r.Hostname ?? "", StringComparer.OrdinalIgnoreCase),
             4 => _trafficSortAsc
+                ? ordered.ThenBy(r => r.CountryCode, StringComparer.OrdinalIgnoreCase)
+                : ordered.ThenByDescending(r => r.CountryCode, StringComparer.OrdinalIgnoreCase),
+            5 => _trafficSortAsc
+                ? ordered.ThenBy(r => r.AsnLabel, StringComparer.OrdinalIgnoreCase)
+                : ordered.ThenByDescending(r => r.AsnLabel, StringComparer.OrdinalIgnoreCase),
+            6 => _trafficSortAsc
                 ? ordered.ThenBy(r => r.TxPerSec)
                 : ordered.ThenByDescending(r => r.TxPerSec),
-            5 => _trafficSortAsc
+            7 => _trafficSortAsc
                 ? ordered.ThenBy(r => r.RxPerSec)
                 : ordered.ThenByDescending(r => r.RxPerSec),
-            6 => _trafficSortAsc
+            8 => _trafficSortAsc
                 ? ordered.ThenBy(r => r.SessionTx)
                 : ordered.ThenByDescending(r => r.SessionTx),
-            7 => _trafficSortAsc
+            9 => _trafficSortAsc
                 ? ordered.ThenBy(r => r.SessionRx)
                 : ordered.ThenByDescending(r => r.SessionRx),
-            8 => _trafficSortAsc
+            10 => _trafficSortAsc
                 ? ordered.ThenBy(r => r.AllTimeTx)
                 : ordered.ThenByDescending(r => r.AllTimeTx),
-            9 => _trafficSortAsc
+            11 => _trafficSortAsc
                 ? ordered.ThenBy(r => r.AllTimeRx)
                 : ordered.ThenByDescending(r => r.AllTimeRx),
             _ => ordered.ThenByDescending(r => r.AllTimeTx),

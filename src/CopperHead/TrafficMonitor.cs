@@ -11,6 +11,8 @@ public sealed class TrafficRow
     public required string Ip { get; init; }
     public required int Port { get; init; }
     public string? Hostname { get; set; }
+    public string CountryCode { get; set; } = "";
+    public string AsnLabel { get; set; } = "";
     public bool Pinned { get; set; }
     public double TxPerSec { get; set; }
     public double RxPerSec { get; set; }
@@ -111,6 +113,7 @@ public sealed class TrafficMonitor
 
         // Sum bytes across all sockets for each remote IP:port in this sample.
         var sampleTotals = new Dictionary<string, (string Ip, int Port, ulong Tx, ulong Rx)>(StringComparer.OrdinalIgnoreCase);
+        var sampleIps = new List<IPAddress>();
         foreach (var row in TcpTableReader.GetIpv4Rows())
         {
             if (!pids.Contains(row.ProcessId))
@@ -130,8 +133,14 @@ public sealed class TrafficMonitor
             if (sampleTotals.TryGetValue(key, out var cur))
                 sampleTotals[key] = (ip, row.RemotePort, cur.Tx + tx, cur.Rx + rx);
             else
+            {
                 sampleTotals[key] = (ip, row.RemotePort, tx, rx);
+                sampleIps.Add(row.RemoteAddress);
+            }
         }
+
+        // Warm geo cache off the hot path when new IPs appear.
+        IpGeoLookup.LookupMany(sampleIps);
 
         lock (_gate)
         {
@@ -139,6 +148,7 @@ public sealed class TrafficMonitor
             {
                 var key = kv.Key;
                 var (ip, port, tx, rx) = kv.Value;
+                var geo = IpGeoLookup.Lookup(ip);
 
                 if (!_endpoints.TryGetValue(key, out var acc))
                 {
@@ -156,6 +166,8 @@ public sealed class TrafficMonitor
                     // First sighting: establish baseline, no rate/session spike.
                     if (dns.TryGetValue(ip, out var host0))
                         acc.Hostname = host0;
+                    acc.CountryCode = geo.CountryDisplay;
+                    acc.AsnLabel = geo.AsnDisplay;
                     acc.Active = true;
                     continue;
                 }
@@ -173,6 +185,11 @@ public sealed class TrafficMonitor
                 acc.Active = true;
                 if (dns.TryGetValue(ip, out var host))
                     acc.Hostname = host;
+                if (geo.HasData)
+                {
+                    acc.CountryCode = geo.CountryDisplay;
+                    acc.AsnLabel = geo.AsnDisplay;
+                }
                 _store.Set(key, acc.AllTimeTx, acc.AllTimeRx);
             }
 
@@ -195,6 +212,8 @@ public sealed class TrafficMonitor
                 Ip = kv.Value.Ip,
                 Port = kv.Value.Port,
                 Hostname = kv.Value.Hostname,
+                CountryCode = kv.Value.CountryCode,
+                AsnLabel = kv.Value.AsnLabel,
                 Pinned = _pinned.Contains(kv.Key),
                 TxPerSec = kv.Value.TxPerSec,
                 RxPerSec = kv.Value.RxPerSec,
@@ -212,6 +231,8 @@ public sealed class TrafficMonitor
         public required string Ip { get; init; }
         public required int Port { get; init; }
         public string? Hostname { get; set; }
+        public string CountryCode { get; set; } = "";
+        public string AsnLabel { get; set; } = "";
         public ulong LastTx { get; set; }
         public ulong LastRx { get; set; }
         public ulong SessionTx { get; set; }

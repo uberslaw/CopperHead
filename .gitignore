@@ -3,3 +3,6 @@ obj/
 publish/
 *.user
 .vs/
+ip-geo-cache.json
+**/config.json
+**/traffic-stats.json

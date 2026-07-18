@@ -16,8 +16,10 @@ public sealed class AppConfig
     public bool AutoAddDiscoveries { get; set; }
     public int DiscoverSeconds { get; set; } = 15;
     public List<string> PinnedTrafficKeys { get; set; } = new();
-    public int TrafficSortColumn { get; set; } = 8; // All time TX default (desc)
+    public int TrafficSortColumn { get; set; } = 10; // All time TX default (desc)
     public bool TrafficSortAsc { get; set; }
+    /// <summary>0 = pre Country/ASN columns; 1 = current Traffic column layout.</summary>
+    public int TrafficColumnSchema { get; set; }
 
     public static string DefaultPath =>
         Path.Combine(AppContext.BaseDirectory, "config.json");

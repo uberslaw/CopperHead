@@ -9,7 +9,9 @@ public sealed record DiscoveredEndpoint(
     int ProcessId,
     IPAddress RemoteAddress,
     int RemotePort,
-    string? Hostname)
+    string? Hostname,
+    string CountryCode = "",
+    string AsnLabel = "")
 {
     public string DisplayKey => Hostname ?? RemoteAddress.ToString();
 
@@ -17,9 +19,12 @@ public sealed record DiscoveredEndpoint(
     {
         if (ProcessId == 0 && RemotePort == 0)
             return DisplayKey; // persisted / not currently live
+        var geoBits = new[] { CountryCode, AsnLabel }.Where(s => s.Length > 0);
+        var geo = string.Join(" ", geoBits);
+        var geoSuffix = geo.Length > 0 ? $"  [{geo}]" : "";
         return Hostname is null
-            ? $"{RemoteAddress}:{RemotePort}  ←  {ProcessName} ({ProcessId})"
-            : $"{Hostname}  ({RemoteAddress}:{RemotePort})  ←  {ProcessName} ({ProcessId})";
+            ? $"{RemoteAddress}:{RemotePort}{geoSuffix}  ←  {ProcessName} ({ProcessId})"
+            : $"{Hostname}  ({RemoteAddress}:{RemotePort}){geoSuffix}  ←  {ProcessName} ({ProcessId})";
     }
 }
 
@@ -66,6 +71,7 @@ public static class ConnectionDiscovery
         var results = new List<DiscoveredEndpoint>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        var candidates = new List<(string Name, int Pid, IPAddress Addr, int Port, string? Host)>();
         foreach (var row in rows)
         {
             if (!pids.TryGetValue(row.ProcessId, out var name))
@@ -80,12 +86,22 @@ public static class ConnectionDiscovery
             if (!seen.Add(key))
                 continue;
 
+            candidates.Add((name, row.ProcessId, row.RemoteAddress, row.RemotePort, host));
+        }
+
+        IpGeoLookup.LookupMany(candidates.Select(c => c.Addr));
+
+        foreach (var c in candidates)
+        {
+            var geo = IpGeoLookup.Lookup(c.Addr);
             results.Add(new DiscoveredEndpoint(
-                name,
-                row.ProcessId,
-                row.RemoteAddress,
-                row.RemotePort,
-                host));
+                c.Name,
+                c.Pid,
+                c.Addr,
+                c.Port,
+                c.Host,
+                geo.CountryDisplay,
+                geo.AsnDisplay));
         }
 
         return results
