@@ -14,7 +14,7 @@ See [`src/CopperHead/README.md`](src/CopperHead/README.md) for build and usage.
 ## Quick start
 
 ```powershell
-cd src\CopperHead
+cd C:\Users\today\Cursor\CopperHead\src\CopperHead
 dotnet publish -c Release -r win-x64 --self-contained false -o ..\..\publish
 Start-Process ..\..\publish\CopperHead.exe -Verb RunAs
 ```
