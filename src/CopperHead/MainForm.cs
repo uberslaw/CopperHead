@@ -31,9 +31,28 @@ public sealed class MainForm : Form
     };
     private readonly Label _status = new() { Text = "Stopped", AutoSize = true, Padding = new Padding(8, 8, 8, 8) };
 
-    // Discover tab
+    // Processes tab
     private readonly TextBox _watchProcesses = new() { Dock = DockStyle.Fill, PlaceholderText = "Cursor, MyLicenseApp" };
-    private readonly Button _applyProcess = new() { Text = "Apply process", AutoSize = true };
+    private readonly Button _applyProcess = new() { Text = "Apply tracked", AutoSize = true };
+    private readonly TextBox _processFilter = new() { Dock = DockStyle.Fill, PlaceholderText = "Filter by name or path…" };
+    private readonly ListView _processList = new()
+    {
+        Dock = DockStyle.Fill,
+        View = View.Details,
+        FullRowSelect = true,
+        GridLines = true,
+        MultiSelect = true,
+        HideSelection = false,
+    };
+    private readonly Button _processDetectStart = new() { Text = "Start detect", AutoSize = true };
+    private readonly Button _processDetectStop = new() { Text = "Stop detect", AutoSize = true, Enabled = false };
+    private readonly Button _processRefreshOnce = new() { Text = "Refresh once", AutoSize = true };
+    private readonly Button _processTrackSelected = new() { Text = "Track selected", AutoSize = true };
+    private readonly Label _processDetectStatus = new() { Text = "Idle", AutoSize = true, Padding = new Padding(8, 6, 0, 0) };
+    private readonly Label _trackedBanner = new() { Text = "Tracking: (none)", AutoSize = true, Padding = new Padding(0, 4, 0, 4) };
+    private List<RunningProcessInfo> _processSnapshot = [];
+
+    // Discover tab
     private readonly ListBox _newDiscoveries = new() { Dock = DockStyle.Fill, IntegralHeight = false, SelectionMode = SelectionMode.MultiExtended };
     private readonly ListBox _prevDiscoveries = new() { Dock = DockStyle.Fill, IntegralHeight = false, SelectionMode = SelectionMode.MultiExtended };
     private readonly Button _scanNow = new() { Text = "Scan now", AutoSize = true };
@@ -97,9 +116,11 @@ public sealed class MainForm : Form
     private CancellationTokenSource? _traceCts;
     private CancellationTokenSource? _discoverCts;
     private CancellationTokenSource? _trafficCts;
+    private CancellationTokenSource? _processDetectCts;
     private Task? _loopTask;
     private Task? _discoverTask;
     private Task? _trafficTask;
+    private Task? _processDetectTask;
     private bool _exitAfterStop;
 
     public MainForm()
@@ -131,8 +152,9 @@ public sealed class MainForm : Form
         trayMenu.Items.Add("Open", null, (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); });
         trayMenu.Items.Add("Stop & Exit", null, async (_, _) =>
         {
-            await StopAsync();
+            await StopProcessDetectAsync();
             await StopBothMonitorsAsync();
+            await StopAsync();
             Close();
         });
         _tray.ContextMenuStrip = trayMenu;
@@ -141,8 +163,11 @@ public sealed class MainForm : Form
 
         InitLogSessionsList();
 
+        InitProcessList();
+
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(BuildRoutesTab());
+        tabs.TabPages.Add(BuildProcessesTab());
         tabs.TabPages.Add(BuildDiscoverTab());
         tabs.TabPages.Add(BuildTrafficTab());
         tabs.TabPages.Add(BuildLogsTab());
@@ -177,17 +202,19 @@ public sealed class MainForm : Form
             LoadAdapters();
             ApplyConfig(AppConfig.LoadOrDefault());
             ApplyProcessContext(force: true);
+            RefreshProcessSnapshot();
             RefreshLogsList();
-            AppendLog("CopperHead ready. Discover/Traffic start together; logs are per process under logs\\.");
+            AppendLog("CopperHead ready. Use Processes tab to detect/track; Discover/Traffic start together.");
         };
 
         FormClosing += async (_, e) =>
         {
-            if ((_loopCts is not null || _traceCts is not null || _discoverCts is not null || _trafficCts is not null) && !_exitAfterStop)
+            if ((_loopCts is not null || _traceCts is not null || _discoverCts is not null || _trafficCts is not null || _processDetectCts is not null) && !_exitAfterStop)
             {
                 e.Cancel = true;
                 _exitAfterStop = true;
                 _traceCts?.Cancel();
+                await StopProcessDetectAsync();
                 await StopBothMonitorsAsync();
                 await StopAsync();
                 _tray.Visible = false;
@@ -273,6 +300,67 @@ public sealed class MainForm : Form
         return page;
     }
 
+    private void InitProcessList()
+    {
+        _processList.Columns.Add("Name", 140);
+        _processList.Columns.Add("PID", 60);
+        _processList.Columns.Add("Path", 420);
+        _processList.Columns.Add("Company", 160);
+        _processList.DoubleClick += (_, _) => TrackSelectedProcesses();
+    }
+
+    private TabPage BuildProcessesTab()
+    {
+        var page = new TabPage("Processes");
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 5,
+            Padding = new Padding(10),
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+        root.Controls.Add(new Label
+        {
+            Text = "Detect running processes, filter by name/path, then Track selected for Discover/Traffic/Logs.",
+            AutoSize = true,
+            Padding = new Padding(0, 0, 0, 4),
+        }, 0, 0);
+
+        var trackedRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
+        trackedRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        trackedRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        trackedRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        trackedRow.Controls.Add(new Label { Text = "Tracked", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        trackedRow.Controls.Add(_watchProcesses, 1, 0);
+        trackedRow.Controls.Add(_applyProcess, 2, 0);
+        root.Controls.Add(trackedRow, 0, 1);
+
+        var filterRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true };
+        filterRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        filterRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        filterRow.Controls.Add(new Label { Text = "Filter", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        filterRow.Controls.Add(_processFilter, 1, 0);
+        root.Controls.Add(filterRow, 0, 2);
+
+        var btnRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Padding = new Padding(0, 4, 0, 6) };
+        btnRow.Controls.Add(_processDetectStart);
+        btnRow.Controls.Add(_processDetectStop);
+        btnRow.Controls.Add(_processRefreshOnce);
+        btnRow.Controls.Add(_processTrackSelected);
+        btnRow.Controls.Add(_processDetectStatus);
+        root.Controls.Add(btnRow, 0, 3);
+
+        root.Controls.Add(_processList, 0, 4);
+        page.Controls.Add(root);
+        return page;
+    }
+
     private TabPage BuildDiscoverTab()
     {
         var page = new TabPage("Discover");
@@ -280,31 +368,16 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 6,
+            RowCount = 5,
             Padding = new Padding(10),
         };
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        root.Controls.Add(new Label
-        {
-            Text = "Process to track (comma-separated OK). Apply process switches the log file. Watch also starts Traffic.",
-            AutoSize = true,
-            Padding = new Padding(0, 0, 0, 4),
-        }, 0, 0);
-
-        var procRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
-        procRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
-        procRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-        procRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        procRow.Controls.Add(new Label { Text = "Processes", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        procRow.Controls.Add(_watchProcesses, 1, 0);
-        procRow.Controls.Add(_applyProcess, 2, 0);
-        root.Controls.Add(procRow, 0, 1);
+        root.Controls.Add(_trackedBanner, 0, 0);
 
         var split = new SplitContainer
         {
@@ -312,7 +385,6 @@ public sealed class MainForm : Form
             Orientation = Orientation.Horizontal,
             SplitterWidth = 6,
         };
-        // Avoid tiny panels before layout
         split.Panel1MinSize = 80;
         split.Panel2MinSize = 80;
 
@@ -342,7 +414,7 @@ public sealed class MainForm : Form
 
         split.Panel1.Controls.Add(newPanel);
         split.Panel2.Controls.Add(prevPanel);
-        root.Controls.Add(split, 0, 2);
+        root.Controls.Add(split, 0, 1);
         page.HandleCreated += (_, _) =>
         {
             try { split.SplitterDistance = Math.Max(120, split.Height / 2); }
@@ -359,14 +431,14 @@ public sealed class MainForm : Form
         btnRow.Controls.Add(_addAll);
         btnRow.Controls.Add(_autoAdd);
         btnRow.Controls.Add(_discoverStatus);
-        root.Controls.Add(btnRow, 0, 3);
+        root.Controls.Add(btnRow, 0, 2);
 
         root.Controls.Add(new Label
         {
-            Text = "Optional: pull a shared hostname list from git (raw URL). Merges into the Routes list.",
+            Text = "Optional: pull a shared hostname list from git (raw URL). Merges into the Routes list. Set tracked process on the Processes tab.",
             AutoSize = true,
             Padding = new Padding(0, 8, 0, 4),
-        }, 0, 4);
+        }, 0, 3);
 
         var urlRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
         urlRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
@@ -375,7 +447,7 @@ public sealed class MainForm : Form
         urlRow.Controls.Add(new Label { Text = "Host list URL", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
         urlRow.Controls.Add(_hostListUrl, 1, 0);
         urlRow.Controls.Add(_fetchList, 2, 0);
-        root.Controls.Add(urlRow, 0, 5);
+        root.Controls.Add(urlRow, 0, 4);
 
         page.Controls.Add(root);
         return page;
@@ -540,6 +612,11 @@ public sealed class MainForm : Form
             SaveConfig();
         };
         _watchProcesses.Leave += (_, _) => ApplyProcessContext(force: false);
+        _processDetectStart.Click += async (_, _) => await StartProcessDetectAsync();
+        _processDetectStop.Click += async (_, _) => await StopProcessDetectAsync();
+        _processRefreshOnce.Click += (_, _) => RefreshProcessSnapshot();
+        _processTrackSelected.Click += (_, _) => TrackSelectedProcesses();
+        _processFilter.TextChanged += (_, _) => RefreshProcessListView();
         _trafficStart.Click += async (_, _) => await StartTrafficMonitorAsync();
         _trafficStop.Click += async (_, _) => await StopBothMonitorsAsync();
         _trafficPin.Click += (_, _) => TogglePinSelected();
@@ -662,6 +739,9 @@ public sealed class MainForm : Form
 
         _sessionLog.SetProcess(text.Length == 0 ? "unknown" : text);
         _activeProcessKey = _sessionLog.ProcessKey;
+        _trackedBanner.Text = string.IsNullOrWhiteSpace(text)
+            ? "Tracking: (none) — set on Processes tab"
+            : $"Tracking: {text}  →  logs\\{_sessionLog.ProcessKey}\\";
 
         _knownBeforeSession.Clear();
         foreach (var k in _sessionLog.LoadKnownEndpoints())
@@ -684,6 +764,161 @@ public sealed class MainForm : Form
         RefreshDiscoveryList();
         AppendLog($"PROCESS context → {_sessionLog.DisplayName} (log: logs\\{_sessionLog.ProcessKey}\\)");
         RefreshLogsList();
+    }
+
+    private void RefreshProcessSnapshot()
+    {
+        try
+        {
+            _processSnapshot = ProcessEnumerator.Snapshot().ToList();
+            RefreshProcessListView();
+            _processDetectStatus.Text = $"{_processList.Items.Count} shown / {_processSnapshot.Count} running";
+        }
+        catch (Exception ex)
+        {
+            AppendLog("PROCESS ERROR " + ex.Message);
+        }
+    }
+
+    private void RefreshProcessListView()
+    {
+        var filter = _processFilter.Text.Trim();
+        IEnumerable<RunningProcessInfo> rows = _processSnapshot;
+        if (filter.Length > 0)
+        {
+            rows = rows.Where(p =>
+                p.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                p.Path.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                p.Company.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                p.Pid.ToString().Contains(filter, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var tracked = GetTrackedNames().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedPids = _processList.SelectedItems
+            .Cast<ListViewItem>()
+            .Select(i => i.Tag as int?)
+            .Where(p => p.HasValue)
+            .Select(p => p!.Value)
+            .ToHashSet();
+
+        _processList.BeginUpdate();
+        _processList.Items.Clear();
+        foreach (var p in rows)
+        {
+            var pathDisplay = string.IsNullOrEmpty(p.Path) ? "(path unavailable)" : p.Path;
+            var item = new ListViewItem(p.Name) { Tag = p.Pid };
+            item.SubItems.Add(p.Pid.ToString());
+            item.SubItems.Add(pathDisplay);
+            item.SubItems.Add(p.Company);
+            if (tracked.Contains(p.Name))
+                item.Font = new Font(_processList.Font, FontStyle.Bold);
+            _processList.Items.Add(item);
+            if (selectedPids.Contains(p.Pid))
+                item.Selected = true;
+        }
+        _processList.EndUpdate();
+    }
+
+    private string[] GetTrackedNames() =>
+        _watchProcesses.Text
+            .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private void TrackSelectedProcesses()
+    {
+        if (_processList.SelectedItems.Count == 0)
+        {
+            MessageBox.Show(this, "Select one or more processes in the list.", Text,
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var names = _processList.SelectedItems
+            .Cast<ListViewItem>()
+            .Select(i => i.Text.Trim())
+            .Where(n => n.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        _watchProcesses.Text = string.Join(", ", names);
+        ApplyProcessContext(force: true);
+        SaveConfig();
+        RefreshProcessListView();
+        AppendLog($"PROCESS tracking set from list: {_watchProcesses.Text}");
+    }
+
+    private async Task StartProcessDetectAsync()
+    {
+        if (_processDetectCts is not null)
+            return;
+
+        _processDetectCts = new CancellationTokenSource();
+        _processDetectStart.Enabled = false;
+        _processDetectStop.Enabled = true;
+        _processDetectStatus.Text = "Detecting…";
+        var token = _processDetectCts.Token;
+
+        _processDetectTask = Task.Run(async () =>
+        {
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    var snap = ProcessEnumerator.Snapshot();
+                    Invoke(() =>
+                    {
+                        _processSnapshot = snap.ToList();
+                        RefreshProcessListView();
+                        _processDetectStatus.Text = $"{_processList.Items.Count} shown / {_processSnapshot.Count} running";
+                    });
+                }
+                catch (ObjectDisposedException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    try { Invoke(() => AppendLog("PROCESS ERROR " + ex.Message)); }
+                    catch { /* ignore */ }
+                }
+
+                try
+                {
+                    await Task.Delay(2000, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        }, token);
+
+        AppendLog("PROCESS detect started.");
+        await Task.CompletedTask;
+    }
+
+    private async Task StopProcessDetectAsync()
+    {
+        if (_processDetectCts is null)
+            return;
+
+        _processDetectCts.Cancel();
+        try
+        {
+            if (_processDetectTask is not null)
+                await _processDetectTask.ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            // expected
+        }
+
+        _processDetectCts.Dispose();
+        _processDetectCts = null;
+        _processDetectTask = null;
+        _processDetectStart.Enabled = true;
+        _processDetectStop.Enabled = false;
+        _processDetectStatus.Text = "Idle";
+        AppendLog("PROCESS detect stopped.");
     }
 
     private void PersistKnownFromUi()
@@ -1551,6 +1786,7 @@ public sealed class MainForm : Form
             _traceCts?.Dispose();
             _discoverCts?.Dispose();
             _trafficCts?.Dispose();
+            _processDetectCts?.Dispose();
         }
         base.Dispose(disposing);
     }
