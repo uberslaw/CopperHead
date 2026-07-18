@@ -936,6 +936,11 @@ function registerShortcuts() {
   const isMac = process.platform === "darwin";
   const arrowMod = isMac ? "Command" : "Control";
 
+  // Quit app
+  bind("CommandOrControl+Q", () => {
+    app.quit();
+  });
+
   // Click-through toggle
   bind("CommandOrControl+Shift+G", () => {
     applyClickThrough(!sharedSettings.clickThrough);

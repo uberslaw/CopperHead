@@ -351,6 +351,7 @@
       [`${kbd(mod)}+drag grid`, "Move overlay"],
       [`${kbd("Z")} (hold)`, "Hide grid while held"],
       [`${kbd("+")} / ${kbd("−")}`, "Zoom resolution in / out"],
+      [`${kbd(mod)}+${kbd("Q")}`, "Quit GridFinder"],
       [`${kbd(mod)}+${kbd("Shift")}+${kbd("G")}`, "Toggle click-through"],
       [`${kbd(mod)}+${kbd("Shift")}+${kbd("P")}`, "Reset controls panel"],
       [`${kbd(mod)}+${kbd("Shift")}+${kbd("I")}`, "Grow increment window"],
