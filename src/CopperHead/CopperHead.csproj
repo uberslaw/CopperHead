@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\copperhead.ico</ApplicationIcon>
+    <AssemblyName>CopperHead</AssemblyName>
+    <RootNamespace>CopperHead</RootNamespace>
+    <Product>CopperHead</Product>
+    <AssemblyTitle>CopperHead</AssemblyTitle>
+    <Version>1.4.1</Version>
+    <Description>CopperHead — resolve hostnames and keep host routes on a chosen gateway (e.g. phone tether).</Description>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Update="config.sample.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Assets\copperhead.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Assets\copperhead.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <EmbeddedResource Include="Assets\copperhead.ico" />
+  </ItemGroup>
+</Project>
