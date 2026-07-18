@@ -1,5 +1,5 @@
 (() => {
-  const api = window.copperhead;
+  const api = window.alignOverlay;
 
   const canvas = document.getElementById("gridCanvas");
   const ctx = canvas.getContext("2d");

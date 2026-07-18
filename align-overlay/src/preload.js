@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-contextBridge.exposeInMainWorld("copperhead", {
+contextBridge.exposeInMainWorld("alignOverlay", {
   minimize: () => ipcRenderer.invoke("window:minimize"),
   close: () => ipcRenderer.invoke("window:close"),
   getBounds: () => ipcRenderer.invoke("window:get-bounds"),

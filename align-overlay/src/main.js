@@ -35,7 +35,7 @@ function createWindow() {
     maximizable: false,
     fullscreenable: false,
     backgroundColor: "#00000000",
-    title: "CopperHead",
+    title: "AlignOverlay",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

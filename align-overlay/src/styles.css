@@ -4,8 +4,8 @@
   --panel-line: #3a332c;
   --text: #f4ebe1;
   --muted: #b7a899;
-  --copper: #d9773a;
-  --copper-soft: #f0c49a;
+  --accent: #d9773a;
+  --accent-soft: #f0c49a;
   --danger: #c45c4a;
   --ok: #8fad6e;
   --frame: rgba(217, 119, 58, 0.85);
@@ -85,7 +85,7 @@ body {
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--copper-soft);
+  color: var(--accent-soft);
 }
 
 .drag-hint {
@@ -112,7 +112,7 @@ body {
   padding: 6px 10px;
   border: 1px solid rgba(240, 196, 154, 0.45);
   background: rgba(26, 23, 20, 0.88);
-  color: var(--copper-soft);
+  color: var(--accent-soft);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -226,7 +226,7 @@ body {
 }
 
 .eyebrow {
-  color: var(--copper);
+  color: var(--accent);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -258,8 +258,8 @@ body {
 }
 
 .icon-btn:hover {
-  border-color: var(--copper);
-  color: var(--copper-soft);
+  border-color: var(--accent);
+  color: var(--accent-soft);
 }
 
 .icon-btn.danger:hover {
@@ -278,7 +278,7 @@ body {
   font-size: 12px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--copper-soft);
+  color: var(--accent-soft);
   margin-bottom: 10px;
 }
 
@@ -312,14 +312,14 @@ body {
 }
 
 .mode-btn.active {
-  border-color: var(--copper);
+  border-color: var(--accent);
   background: rgba(217, 119, 58, 0.18);
-  color: var(--copper-soft);
+  color: var(--accent-soft);
 }
 
 .mode-btn:hover,
 .btn:hover {
-  border-color: var(--copper-soft);
+  border-color: var(--accent-soft);
 }
 
 .btn.ghost {
@@ -348,7 +348,7 @@ body {
 
 input[type="range"] {
   width: 100%;
-  accent-color: var(--copper);
+  accent-color: var(--accent);
 }
 
 .color-row {
@@ -387,7 +387,7 @@ input[type="range"] {
 }
 
 .toggle input {
-  accent-color: var(--copper);
+  accent-color: var(--accent);
 }
 
 .readout {
