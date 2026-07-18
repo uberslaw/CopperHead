@@ -37,7 +37,7 @@ public sealed class AppConfig
                 RefreshSeconds = 30,
                 LastTraceTarget = "api2.cursor.sh",
                 WatchProcesses = "Cursor",
-                HostListUrl = "https://raw.githubusercontent.com/uberslaw/CopperHead/master/docs/hosts-cursor.txt",
+                HostListUrl = "https://raw.githubusercontent.com/uberslaw/CopperHead/cursor/hostname-route-refresher-4c5d/docs/hosts-cursor.txt",
                 DiscoverSeconds = 15,
             };
         }
