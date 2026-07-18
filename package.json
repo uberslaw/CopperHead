@@ -1,0 +1,52 @@
+{
+  "name": "gridfinder",
+  "version": "1.0.0",
+  "description": "Transparent desktop overlay for grid alignment, measuring, and sticky guides",
+  "main": "src/main.js",
+  "author": "GridFinder",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/uberslaw/GridFinder.git"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.gridfinder.app",
+    "productName": "GridFinder",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^36.4.0",
+    "electron-builder": "^26.0.12"
+  }
+}
