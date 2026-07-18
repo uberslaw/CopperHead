@@ -70,6 +70,18 @@ public sealed class HostRouteService
 
     public IReadOnlyCollection<string> ManagedDestinations => _routes.ManagedDestinations;
 
+    /// <summary>Last successful host → IPv4 set from <see cref="RefreshAsync"/>.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyCollection<string>> HostToIps
+    {
+        get
+        {
+            return _hostToIps.ToDictionary(
+                kv => kv.Key,
+                kv => (IReadOnlyCollection<string>)kv.Value.ToList(),
+                StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
     public async Task RefreshAsync(
         IEnumerable<string> hostnames,
         NetworkAdapterChoice adapter,

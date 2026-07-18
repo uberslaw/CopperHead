@@ -11,6 +11,17 @@ public sealed class MainForm : Form
         Font = new Font("Consolas", 10f),
         AcceptsReturn = true,
     };
+    private readonly ListView _routesTable = new()
+    {
+        Dock = DockStyle.Fill,
+        View = View.Details,
+        FullRowSelect = true,
+        GridLines = true,
+        MultiSelect = true,
+        HideSelection = false,
+    };
+    private int _routesSortColumn; // Host
+    private bool _routesSortAsc = true;
     private readonly NumericUpDown _interval = new() { Minimum = 5, Maximum = 3600, Value = 30, Width = 80 };
     private readonly Button _refreshAdapters = new() { Text = "Refresh NICs", AutoSize = true };
     private readonly Button _start = new() { Text = "Start", AutoSize = true };
@@ -188,11 +199,13 @@ public sealed class MainForm : Form
         InitProcessList();
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
-        tabs.TabPages.Add(BuildRoutesTab());
+        InitRoutesTable();
+
         tabs.TabPages.Add(BuildTrafficTab());
-        tabs.TabPages.Add(BuildProcessesTab());
+        tabs.TabPages.Add(BuildRoutesTab());
         tabs.TabPages.Add(BuildDiscoverTab());
         tabs.TabPages.Add(BuildLogsTab());
+        tabs.TabPages.Add(BuildProcessesTab());
 
         var footer = new Label
         {
@@ -226,7 +239,8 @@ public sealed class MainForm : Form
             ApplyProcessContext(force: true);
             RefreshProcessSnapshot();
             RefreshLogsList();
-            AppendLog("CopperHead ready. Use Processes tab to detect/track; Discover/Traffic start together.");
+            _ = RefreshRoutesTableAsync();
+            AppendLog("CopperHead ready. Traffic first; Processes on the right. Discover/Traffic start together.");
         };
 
         FormClosing += async (_, e) =>
@@ -257,6 +271,32 @@ public sealed class MainForm : Form
         };
     }
 
+    private void InitRoutesTable()
+    {
+        _routesTable.Columns.Add("Host", 160);
+        _routesTable.Columns.Add("IP", 110);
+        _routesTable.Columns.Add("Country", 70);
+        _routesTable.Columns.Add("ASN", 200);
+        _routesTable.Columns.Add("Routed", 60);
+        _routesTable.ColumnClick += (_, e) =>
+        {
+            if (_routesSortColumn == e.Column)
+                _routesSortAsc = !_routesSortAsc;
+            else
+            {
+                _routesSortColumn = e.Column;
+                _routesSortAsc = true;
+            }
+            // Re-sort currently displayed items in place
+            var rows = _routesTable.Items.Cast<ListViewItem>()
+                .Select(i => i.Tag as RouteTableRow)
+                .Where(r => r is not null)
+                .Select(r => r!)
+                .ToList();
+            FillRoutesTable(rows);
+        };
+    }
+
     private TabPage BuildRoutesTab()
     {
         var page = new TabPage("Routes");
@@ -268,10 +308,10 @@ public sealed class MainForm : Form
             Padding = new Padding(10),
         };
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 35f));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 45f));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 65f));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 55f));
 
         var adapterRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true };
         adapterRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
@@ -282,15 +322,33 @@ public sealed class MainForm : Form
         adapterRow.Controls.Add(_refreshAdapters, 2, 0);
 
         var mid = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-        mid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        mid.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-        mid.Controls.Add(new Label
+        mid.RowStyles.Add(new RowStyle(SizeType.Percent, 40f));
+        mid.RowStyles.Add(new RowStyle(SizeType.Percent, 60f));
+
+        var hostsPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        hostsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        hostsPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        hostsPanel.Controls.Add(new Label
         {
             Text = "Hostnames / IPs (one per line) — editable anytime; Apply now or wait for refresh",
             AutoSize = true,
             Padding = new Padding(0, 8, 0, 4),
         }, 0, 0);
-        mid.Controls.Add(_hosts, 0, 1);
+        hostsPanel.Controls.Add(_hosts, 0, 1);
+
+        var tablePanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        tablePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tablePanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        tablePanel.Controls.Add(new Label
+        {
+            Text = "Resolved routes — Country/ASN (Team Cymru). Click headers to sort.",
+            AutoSize = true,
+            Padding = new Padding(0, 8, 0, 4),
+        }, 0, 0);
+        tablePanel.Controls.Add(_routesTable, 0, 1);
+
+        mid.Controls.Add(hostsPanel, 0, 0);
+        mid.Controls.Add(tablePanel, 0, 1);
 
         var controls = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Padding = new Padding(0, 4, 0, 4) };
         controls.Controls.Add(new Label { Text = "Refresh every (sec)", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
@@ -1643,6 +1701,122 @@ public sealed class MainForm : Form
         }
     }
 
+    private sealed record RouteTableRow(string Host, string Ip, string Country, string Asn, bool Routed);
+
+    private async Task RefreshRoutesTableAsync()
+    {
+        var hosts = _hosts.Lines
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0 && !l.StartsWith('#'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var mapped = _service.HostToIps;
+        var managed = _service.ManagedDestinations.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var rows = new List<RouteTableRow>();
+        var ipsToGeo = new List<System.Net.IPAddress>();
+
+        foreach (var host in hosts)
+        {
+            IReadOnlyCollection<string> ipTexts;
+            if (mapped.TryGetValue(host, out var known) && known.Count > 0)
+            {
+                ipTexts = known;
+            }
+            else if (System.Net.IPAddress.TryParse(host, out var literal) &&
+                     literal.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+            {
+                ipTexts = [literal.ToString()];
+            }
+            else
+            {
+                try
+                {
+                    var resolved = await HostRouteService.ResolveIpv4Async(host, CancellationToken.None)
+                        .ConfigureAwait(true);
+                    ipTexts = resolved.Select(i => i.ToString()).ToList();
+                }
+                catch
+                {
+                    ipTexts = [];
+                }
+            }
+
+            if (ipTexts.Count == 0)
+            {
+                rows.Add(new RouteTableRow(host, "", "", "", false));
+                continue;
+            }
+
+            foreach (var ipText in ipTexts)
+            {
+                if (System.Net.IPAddress.TryParse(ipText, out var ip))
+                    ipsToGeo.Add(ip);
+                rows.Add(new RouteTableRow(host, ipText, "", "", managed.Contains(ipText)));
+            }
+        }
+
+        await Task.Run(() => IpGeoLookup.LookupMany(ipsToGeo)).ConfigureAwait(true);
+
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var r = rows[i];
+            if (r.Ip.Length == 0)
+                continue;
+            var geo = IpGeoLookup.Lookup(r.Ip);
+            rows[i] = r with { Country = geo.CountryDisplay, Asn = geo.AsnDisplay };
+        }
+
+        FillRoutesTable(rows);
+    }
+
+    private void FillRoutesTable(IEnumerable<RouteTableRow> rows)
+    {
+        IEnumerable<RouteTableRow> ordered = _routesSortColumn switch
+        {
+            0 => _routesSortAsc
+                ? rows.OrderBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
+                : rows.OrderByDescending(r => r.Host, StringComparer.OrdinalIgnoreCase),
+            1 => _routesSortAsc
+                ? rows.OrderBy(r => r.Ip, StringComparer.OrdinalIgnoreCase)
+                : rows.OrderByDescending(r => r.Ip, StringComparer.OrdinalIgnoreCase),
+            2 => _routesSortAsc
+                ? rows.OrderBy(r => r.Country, StringComparer.OrdinalIgnoreCase)
+                : rows.OrderByDescending(r => r.Country, StringComparer.OrdinalIgnoreCase),
+            3 => _routesSortAsc
+                ? rows.OrderBy(r => r.Asn, StringComparer.OrdinalIgnoreCase)
+                : rows.OrderByDescending(r => r.Asn, StringComparer.OrdinalIgnoreCase),
+            4 => _routesSortAsc
+                ? rows.OrderBy(r => r.Routed)
+                : rows.OrderByDescending(r => r.Routed),
+            _ => rows.OrderBy(r => r.Host, StringComparer.OrdinalIgnoreCase),
+        };
+
+        var selected = _routesTable.SelectedItems
+            .Cast<ListViewItem>()
+            .Select(i => i.Tag as RouteTableRow)
+            .Where(r => r is not null)
+            .Select(r => $"{r!.Host}|{r.Ip}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        _routesTable.BeginUpdate();
+        _routesTable.Items.Clear();
+        foreach (var r in ordered)
+        {
+            var item = new ListViewItem(r.Host) { Tag = r };
+            item.SubItems.Add(r.Ip);
+            item.SubItems.Add(r.Country);
+            item.SubItems.Add(r.Asn);
+            item.SubItems.Add(r.Routed ? "yes" : "");
+            if (!r.Routed)
+                item.ForeColor = Color.Gray;
+            _routesTable.Items.Add(item);
+            if (selected.Contains($"{r.Host}|{r.Ip}"))
+                item.Selected = true;
+        }
+        _routesTable.EndUpdate();
+    }
+
     private async Task ApplyNowAsync()
     {
         if (_adapters.SelectedItem is not NetworkAdapterChoice adapter)
@@ -1667,6 +1841,7 @@ public sealed class MainForm : Form
             AppendLog("Applying hostname list now…");
             await _service.RefreshAsync(hosts, adapter, token).ConfigureAwait(true);
             SaveConfig();
+            await RefreshRoutesTableAsync().ConfigureAwait(true);
         }
         catch (OperationCanceledException)
         {
@@ -1728,7 +1903,19 @@ public sealed class MainForm : Form
                     if (adapter is null)
                         _service.WriteLog("WARN  selected adapter missing; waiting…");
                     else
+                    {
                         await _service.RefreshAsync(hostList, adapter, token).ConfigureAwait(false);
+                        try
+                        {
+                            Task refreshUi = Task.CompletedTask;
+                            Invoke(() => { refreshUi = RefreshRoutesTableAsync(); });
+                            await refreshUi.ConfigureAwait(false);
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            break;
+                        }
+                    }
                 }
                 catch (OperationCanceledException)
                 {

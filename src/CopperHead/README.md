@@ -4,7 +4,8 @@ Windows admin utility that keeps **/32 host routes** pointed at a chosen NIC (fo
 
 ## Features
 
-- Configurable hostname list (edit anytime while running)
+- Configurable hostname list with resolved IP **Country/ASN** table on Routes
+- Tab order: Traffic · Routes · Discover · Logs · Processes
 - **Apply now** — refresh routes immediately after editing domains
 - Periodic DNS refresh
 - **Tracert** — pins the target via the selected NIC, then streams live `tracert -d` output (first hop should be your tether gateway)
