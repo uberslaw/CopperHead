@@ -1,5 +1,8 @@
 bin/
 obj/
 publish/
+logs/
+traffic-stats.json
+config.json
 *.user
 .vs/
