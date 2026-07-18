@@ -1030,30 +1030,43 @@ public sealed class MainForm : Form
 
     private void RefreshLogsList()
     {
-        var selected = _logSessions.SelectedItems.Count > 0
-            ? _logSessions.SelectedItems[0].Tag as string
-            : null;
-
-        _logSessions.BeginUpdate();
-        _logSessions.Items.Clear();
-        foreach (var info in SessionLogStore.ListProcessLogs())
+        try
         {
-            var item = new ListViewItem(info.DisplayName) { Tag = info.ProcessKey };
-            item.SubItems.Add(info.EventCount.ToString());
-            item.SubItems.Add(info.KnownEndpointCount.ToString());
-            item.SubItems.Add(info.LastWriteUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
-            _logSessions.Items.Add(item);
-            if (string.Equals(selected, info.ProcessKey, StringComparison.OrdinalIgnoreCase) ||
-                (selected is null && string.Equals(info.ProcessKey, _sessionLog.ProcessKey, StringComparison.OrdinalIgnoreCase)))
+            var selected = _logSessions.SelectedItems.Count > 0
+                ? _logSessions.SelectedItems[0].Tag as string
+                : null;
+
+            _logSessions.BeginUpdate();
+            _logSessions.Items.Clear();
+            foreach (var info in SessionLogStore.ListProcessLogs())
             {
-                item.Selected = true;
+                var item = new ListViewItem(info.DisplayName) { Tag = info.ProcessKey };
+                item.SubItems.Add(info.EventCount.ToString());
+                item.SubItems.Add(info.KnownEndpointCount.ToString());
+                item.SubItems.Add(info.LastWriteUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
+                _logSessions.Items.Add(item);
+                if (string.Equals(selected, info.ProcessKey, StringComparison.OrdinalIgnoreCase) ||
+                    (selected is null && string.Equals(info.ProcessKey, _sessionLog.ProcessKey, StringComparison.OrdinalIgnoreCase)))
+                {
+                    item.Selected = true;
+                }
             }
+            _logSessions.EndUpdate();
+            if (_logSessions.SelectedItems.Count == 0 && _logSessions.Items.Count > 0)
+                _logSessions.Items[0].Selected = true;
+            else
+                PreviewSelectedLog();
         }
-        _logSessions.EndUpdate();
-        if (_logSessions.SelectedItems.Count == 0 && _logSessions.Items.Count > 0)
-            _logSessions.Items[0].Selected = true;
-        else
-            PreviewSelectedLog();
+        catch (Exception ex)
+        {
+            // Never block launch/UI on log IO
+            try
+            {
+                _logBrowser.DocumentText =
+                    $"<html><body style='font-family:Segoe UI;padding:16px'>Could not refresh logs: {System.Net.WebUtility.HtmlEncode(ex.Message)}</body></html>";
+            }
+            catch { /* ignore */ }
+        }
     }
 
     private void PreviewSelectedLog()

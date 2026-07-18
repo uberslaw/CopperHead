@@ -138,12 +138,13 @@ public sealed class SessionLogStore
             var eventCount = 0;
             if (File.Exists(eventsPath))
             {
-                lastWrite = File.GetLastWriteTimeUtc(eventsPath);
-                eventCount = CountLines(eventsPath);
+                try { lastWrite = File.GetLastWriteTimeUtc(eventsPath); }
+                catch { /* ignore */ }
+                try { eventCount = CountLines(eventsPath); }
+                catch { /* file busy — leave count 0 */ }
             }
 
             var knownCount = 0;
-            string display = key;
             if (File.Exists(knownPath))
             {
                 try
@@ -154,7 +155,7 @@ public sealed class SessionLogStore
             }
 
             // Prefer last session message display name if present
-            display = TryReadDisplayName(eventsPath) ?? key.Replace('+', ',');
+            var display = TryReadDisplayName(eventsPath) ?? key.Replace('+', ',');
 
             results.Add(new LogProcessInfo(key, display, dir, lastWrite, eventCount, knownCount));
         }
@@ -215,7 +216,8 @@ public sealed class SessionLogStore
         sb.AppendLine("<div class='card'><h2>Event history</h2><table><thead><tr><th>Time</th><th>Category</th><th>Message</th></tr></thead><tbody>");
         if (File.Exists(eventsPath))
         {
-            foreach (var line in File.ReadLines(eventsPath).Reverse().Take(2000).Reverse())
+            var lines = ReadAllLinesShared(eventsPath);
+            foreach (var line in lines.TakeLast(2000))
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 try
@@ -283,8 +285,8 @@ public sealed class SessionLogStore
     private static int CountLines(string path)
     {
         var n = 0;
-        using var reader = new StreamReader(path);
-        while (reader.ReadLine() is not null) n++;
+        foreach (var _ in ReadAllLinesShared(path))
+            n++;
         return n;
     }
 
@@ -293,10 +295,10 @@ public sealed class SessionLogStore
         if (!File.Exists(eventsPath)) return null;
         try
         {
-            // Read last few lines for a session switch message
-            var lines = File.ReadLines(eventsPath).TakeLast(20);
-            foreach (var line in lines.Reverse())
+            var lines = ReadAllLinesShared(eventsPath);
+            foreach (var line in Enumerable.Reverse(lines.TakeLast(20)))
             {
+                if (string.IsNullOrWhiteSpace(line)) continue;
                 using var doc = JsonDocument.Parse(line);
                 if (doc.RootElement.TryGetProperty("process", out var p))
                     return p.GetString();
@@ -304,5 +306,18 @@ public sealed class SessionLogStore
         }
         catch { /* ignore */ }
         return null;
+    }
+
+    /// <summary>
+    /// Read lines while another process may have the file open for append.
+    /// </summary>
+    private static List<string> ReadAllLinesShared(string path)
+    {
+        var lines = new List<string>();
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        while (reader.ReadLine() is { } line)
+            lines.Add(line);
+        return lines;
     }
 }
