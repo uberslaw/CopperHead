@@ -31,11 +31,15 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.ico"
@@ -48,5 +52,8 @@
   "devDependencies": {
     "electron": "^36.4.0",
     "electron-builder": "^26.0.12"
+  },
+  "allowScripts": {
+    "electron@36.9.5": true
   }
 }
