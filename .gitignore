@@ -6,3 +6,4 @@ publish/
 ip-geo-cache.json
 **/config.json
 **/traffic-stats.json
+src/HostRouteRefresher/dotnet-sdk-8.0.423-win-x64.exe
