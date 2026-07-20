@@ -3,3 +3,8 @@ obj/
 publish/
 *.user
 .vs/
+
+# Never commit SDK / installer binaries
+*.exe
+!**/publish/**/*.exe
+src/HostRouteRefresher/dotnet-sdk-*.exe
