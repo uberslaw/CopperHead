@@ -11,13 +11,17 @@ public sealed class AppConfig
     public string? Gateway { get; set; }
     public int RefreshSeconds { get; set; } = 30;
     public string? LastTraceTarget { get; set; }
-    public string WatchProcesses { get; set; } = "Cursor";
+    public string WatchProcesses { get; set; } = "Cursor*";
     public string? HostListUrl { get; set; }
     public bool AutoAddDiscoveries { get; set; }
+    /// <summary>Null = default on (needed for corp proxies). Explicit true/false from UI.</summary>
+    public bool? IncludePrivateRemotes { get; set; }
     public int DiscoverSeconds { get; set; } = 15;
     public List<string> PinnedTrafficKeys { get; set; } = new();
-    public int TrafficSortColumn { get; set; } = 8; // All time TX default (desc)
+    public int TrafficSortColumn { get; set; } = 10; // All time TX default (desc)
     public bool TrafficSortAsc { get; set; }
+    /// <summary>0 = pre Country/ASN columns; 1 = current Traffic column layout.</summary>
+    public int TrafficColumnSchema { get; set; }
 
     public static string DefaultPath =>
         Path.Combine(AppContext.BaseDirectory, "config.json");
@@ -36,7 +40,7 @@ public sealed class AppConfig
                 ],
                 RefreshSeconds = 30,
                 LastTraceTarget = "api2.cursor.sh",
-                WatchProcesses = "Cursor",
+                WatchProcesses = "Cursor*",
                 HostListUrl = "https://raw.githubusercontent.com/uberslaw/CopperHead/master/docs/hosts-cursor.txt",
                 DiscoverSeconds = 15,
             };
@@ -67,6 +71,18 @@ public sealed class HostRouteService
         Log?.Invoke($"{DateTime.Now:HH:mm:ss}  {message}");
 
     public IReadOnlyCollection<string> ManagedDestinations => _routes.ManagedDestinations;
+
+    /// <summary>Last successful host → IPv4 set from <see cref="RefreshAsync"/>.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyCollection<string>> HostToIps
+    {
+        get
+        {
+            return _hostToIps.ToDictionary(
+                kv => kv.Key,
+                kv => (IReadOnlyCollection<string>)kv.Value.ToList(),
+                StringComparer.OrdinalIgnoreCase);
+        }
+    }
 
     public async Task RefreshAsync(
         IEnumerable<string> hostnames,
