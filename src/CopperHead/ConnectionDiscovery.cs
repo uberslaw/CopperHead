@@ -156,6 +156,71 @@ public static class ConnectionDiscovery
         return pids;
     }
 
+    /// <summary>
+    /// Which processes currently have established TCP to the given remote IPs?
+    /// Used when tracked names find nothing — often the real owner isn't "Cursor".
+    /// </summary>
+    public static IReadOnlyList<(string ProcessName, int Pid, string RemoteIp, int Port)> FindOwnersForIps(
+        IEnumerable<string> remoteIps,
+        int maxResults = 40)
+    {
+        var targets = remoteIps
+            .Select(s => s.Trim())
+            .Where(s => s.Length > 0)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (targets.Count == 0)
+            return [];
+
+        var pidNames = new Dictionary<int, string>();
+        foreach (var proc in Process.GetProcesses())
+        {
+            try { pidNames[proc.Id] = proc.ProcessName; }
+            catch { /* ignore */ }
+            finally { proc.Dispose(); }
+        }
+
+        var hits = new List<(string ProcessName, int Pid, string RemoteIp, int Port)>();
+        foreach (var row in TcpTableReader.GetIpv4Rows())
+        {
+            if (row.State != 5)
+                continue;
+            var ip = row.RemoteAddress.ToString();
+            if (!targets.Contains(ip))
+                continue;
+            pidNames.TryGetValue(row.ProcessId, out var name);
+            hits.Add((name ?? $"pid:{row.ProcessId}", row.ProcessId, ip, row.RemotePort));
+            if (hits.Count >= maxResults)
+                break;
+        }
+
+        return hits;
+    }
+
+    public static IReadOnlyList<string> SuggestSimilarProcessNames(IEnumerable<string> patterns, int max = 12)
+    {
+        var needles = NormalizePatterns(patterns)
+            .Select(p => p.TrimEnd('*'))
+            .Where(p => p.Length >= 2)
+            .ToList();
+        if (needles.Count == 0)
+            return [];
+
+        var found = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var proc in Process.GetProcesses())
+        {
+            try
+            {
+                var n = proc.ProcessName;
+                if (needles.Any(nd => n.Contains(nd, StringComparison.OrdinalIgnoreCase)))
+                    found.Add(n);
+            }
+            catch { /* ignore */ }
+            finally { proc.Dispose(); }
+        }
+
+        return found.Take(max).ToList();
+    }
+
     public static List<string> NormalizePatterns(IEnumerable<string> processNames) =>
         processNames
             .Select(p => p.Trim())

@@ -11,7 +11,7 @@ public sealed class AppConfig
     public string? Gateway { get; set; }
     public int RefreshSeconds { get; set; } = 30;
     public string? LastTraceTarget { get; set; }
-    public string WatchProcesses { get; set; } = "Cursor";
+    public string WatchProcesses { get; set; } = "Cursor*";
     public string? HostListUrl { get; set; }
     public bool AutoAddDiscoveries { get; set; }
     /// <summary>Null = default on (needed for corp proxies). Explicit true/false from UI.</summary>
@@ -40,7 +40,7 @@ public sealed class AppConfig
                 ],
                 RefreshSeconds = 30,
                 LastTraceTarget = "api2.cursor.sh",
-                WatchProcesses = "Cursor",
+                WatchProcesses = "Cursor*",
                 HostListUrl = "https://raw.githubusercontent.com/uberslaw/CopperHead/master/docs/hosts-cursor.txt",
                 DiscoverSeconds = 15,
             };

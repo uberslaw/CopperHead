@@ -85,6 +85,7 @@ public sealed class MainForm : Form
         HideSelection = false,
     };
     private readonly Button _scanNow = new() { Text = "Scan now", AutoSize = true };
+    private readonly Button _diagnoseDiscover = new() { Text = "Diagnose", AutoSize = true };
     private readonly Button _watchDiscover = new() { Text = "Watch", AutoSize = true };
     private readonly Button _stopWatchDiscover = new() { Text = "Stop watch", AutoSize = true, Enabled = false };
     private readonly Button _addSelected = new() { Text = "Add selected to hosts", AutoSize = true };
@@ -520,6 +521,7 @@ public sealed class MainForm : Form
 
         var btnRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Padding = new Padding(0, 6, 0, 4) };
         btnRow.Controls.Add(_scanNow);
+        btnRow.Controls.Add(_diagnoseDiscover);
         btnRow.Controls.Add(_watchDiscover);
         btnRow.Controls.Add(_stopWatchDiscover);
         btnRow.Controls.Add(new Label { Text = "every (sec)", AutoSize = true, Padding = new Padding(8, 6, 0, 0) });
@@ -729,6 +731,7 @@ public sealed class MainForm : Form
         _tracert.Click += async (_, _) => await RunTraceAsync();
         _cancelTrace.Click += (_, _) => _traceCts?.Cancel();
         _scanNow.Click += (_, _) => RunDiscovery(autoAdd: _autoAdd.Checked);
+        _diagnoseDiscover.Click += (_, _) => RunDiscoverDiagnose();
         _watchDiscover.Click += async (_, _) => await StartDiscoverWatchAsync();
         _stopWatchDiscover.Click += async (_, _) => await StopBothMonitorsAsync();
         _addSelected.Click += (_, _) => AddDiscoveriesToHosts(selectedOnly: true);
@@ -797,7 +800,7 @@ public sealed class MainForm : Form
         _interval.Value = Math.Clamp(config.RefreshSeconds, 5, 3600);
         if (!string.IsNullOrWhiteSpace(config.LastTraceTarget))
             _traceTarget.Text = config.LastTraceTarget;
-        _watchProcesses.Text = config.WatchProcesses ?? "Cursor";
+        _watchProcesses.Text = string.IsNullOrWhiteSpace(config.WatchProcesses) ? "Cursor*" : config.WatchProcesses;
         _hostListUrl.Text = config.HostListUrl ?? "";
         _autoAdd.Checked = config.AutoAddDiscoveries;
         _includePrivate.Checked = config.IncludePrivateRemotes ?? true;
@@ -1126,8 +1129,8 @@ public sealed class MainForm : Form
             _discoverStatus.Text = $"{_sessionNewKeys.Count} new / {_knownBeforeSession.Count} previous";
             AppendLog($"DISCOVER {found.Count} live · {brandNew.Count} new · {scan.Detail}");
 
-            if (found.Count == 0 && scan.SkippedPrivate > 0 && !_includePrivate.Checked)
-                AppendLog("DISCOVER tip: enable Include private/LAN — office proxies often only show private remotes.");
+            if (found.Count == 0)
+                AppendDiscoverHints(scan, names);
 
             if (autoAdd && brandNew.Count > 0)
             {
@@ -1141,6 +1144,106 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             AppendLog("DISCOVER ERROR " + ex.Message);
+        }
+    }
+
+    private void AppendDiscoverHints(ConnectionDiscovery.ScanResult scan, string[] names)
+    {
+        if (scan.SkippedPrivate > 0 && !_includePrivate.Checked)
+            AppendLog("DISCOVER tip: enable Include private/LAN — office proxies often only show private remotes.");
+
+        if (scan.MatchedPids == 0)
+        {
+            var similar = ConnectionDiscovery.SuggestSimilarProcessNames(names);
+            if (similar.Count > 0)
+                AppendLog("DISCOVER tip: no PID match. Similar running: " + string.Join(", ", similar) + " — Track selected / use Cursor*");
+            else
+                AppendLog("DISCOVER tip: no matching process running. Open Processes → Start detect → Track selected.");
+        }
+        else if (scan.EstablishedForPids == 0)
+        {
+            AppendLog("DISCOVER tip: process matched but 0 established TCP — app may be idle or using UDP/QUIC only.");
+        }
+
+        // Cross-check: who owns sockets to IPs we already route / resolve from the host list?
+        var targetIps = CollectRouteTargetIps();
+        if (targetIps.Count == 0)
+            return;
+
+        var owners = ConnectionDiscovery.FindOwnersForIps(targetIps);
+        if (owners.Count == 0)
+        {
+            AppendLog($"DISCOVER tip: no established TCP to {targetIps.Count} routed/host IPs right now (try using Cursor so it connects).");
+            return;
+        }
+
+        var byProc = owners
+            .GroupBy(o => o.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(g => g.Count())
+            .Take(8)
+            .Select(g => $"{g.Key}×{g.Count()}")
+            .ToList();
+        AppendLog("DISCOVER tip: processes talking to your route/host IPs → " + string.Join(", ", byProc) + " (Track those names)");
+    }
+
+    private List<string> CollectRouteTargetIps()
+    {
+        var ips = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var ip in _service.ManagedDestinations)
+            ips.Add(ip);
+        foreach (var kv in _service.HostToIps)
+        {
+            foreach (var ip in kv.Value)
+                ips.Add(ip);
+        }
+
+        // Also parse literal IPs from the hosts box
+        foreach (var line in _hosts.Lines)
+        {
+            var t = line.Trim();
+            if (t.Length == 0 || t.StartsWith('#'))
+                continue;
+            if (System.Net.IPAddress.TryParse(t, out var ip) &&
+                ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                ips.Add(ip.ToString());
+        }
+
+        return ips.ToList();
+    }
+
+    private void RunDiscoverDiagnose()
+    {
+        ApplyProcessContext(force: false);
+        var names = _watchProcesses.Text
+            .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        AppendLog("DISCOVER diagnose…");
+        try
+        {
+            var scan = ConnectionDiscovery.Scan(names.Length == 0 ? ["Cursor*"] : names, includePrivateRemotes: true);
+            AppendLog($"DISCOVER diagnose: {scan.Detail}; endpoints={scan.Endpoints.Count}");
+            foreach (var ep in scan.Endpoints.Take(15))
+                AppendLog($"  · {ep}");
+            AppendDiscoverHints(scan, names.Length == 0 ? ["Cursor*"] : names);
+
+            var targets = CollectRouteTargetIps();
+            AppendLog($"DISCOVER diagnose: checking {targets.Count} route/host IP(s) for socket owners…");
+            var owners = ConnectionDiscovery.FindOwnersForIps(targets);
+            if (owners.Count == 0)
+                AppendLog("DISCOVER diagnose: no process currently has TCP to those IPs.");
+            else
+            {
+                foreach (var g in owners.GroupBy(o => o.ProcessName, StringComparer.OrdinalIgnoreCase)
+                             .OrderByDescending(x => x.Count())
+                             .Take(12))
+                {
+                    var sample = string.Join(", ", g.Select(x => $"{x.RemoteIp}:{x.Port}").Distinct().Take(4));
+                    AppendLog($"  · {g.Key} ({g.Count()} hit(s)) e.g. {sample}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog("DISCOVER diagnose ERROR " + ex.Message);
         }
     }
 
