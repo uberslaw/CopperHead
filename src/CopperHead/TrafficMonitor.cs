@@ -77,28 +77,9 @@ public sealed class TrafficMonitor
         }
     }
 
-    public IReadOnlyList<TrafficRow> Sample(IEnumerable<string> processNames)
+    public IReadOnlyList<TrafficRow> Sample(IEnumerable<string> processNames, bool includePrivateRemotes = false)
     {
-        var wanted = processNames
-            .Select(p => p.Trim())
-            .Where(p => p.Length > 0)
-            .Select(p => p.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? p[..^4] : p)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        var pids = new HashSet<int>();
-        if (wanted.Count > 0)
-        {
-            foreach (var proc in Process.GetProcesses())
-            {
-                try
-                {
-                    if (wanted.Contains(proc.ProcessName))
-                        pids.Add(proc.Id);
-                }
-                catch { /* ignore */ }
-                finally { proc.Dispose(); }
-            }
-        }
+        var pids = ConnectionDiscovery.ResolvePids(processNames);
 
         var dns = DnsCacheReader.GetIpToHostMap();
         var now = DateTime.UtcNow;
@@ -120,7 +101,7 @@ public sealed class TrafficMonitor
                 continue;
             if (row.State != 5)
                 continue;
-            if (ConnectionDiscovery.IsPrivateOrLocal(row.RemoteAddress))
+            if (!includePrivateRemotes && ConnectionDiscovery.IsPrivateOrLocal(row.RemoteAddress))
                 continue;
 
             var ip = row.RemoteAddress.ToString();

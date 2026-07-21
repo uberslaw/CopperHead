@@ -34,24 +34,32 @@ public sealed record DiscoveredEndpoint(
 /// </summary>
 public static class ConnectionDiscovery
 {
-    public static IReadOnlyList<DiscoveredEndpoint> Scan(IEnumerable<string> processNames)
-    {
-        var wanted = processNames
-            .Select(p => p.Trim())
-            .Where(p => p.Length > 0)
-            .Select(p => p.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? p[..^4] : p)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    public sealed record ScanResult(
+        IReadOnlyList<DiscoveredEndpoint> Endpoints,
+        int MatchedProcesses,
+        int MatchedPids,
+        int EstablishedForPids,
+        int SkippedPrivate,
+        string Detail);
 
-        if (wanted.Count == 0)
-            return [];
+    public static ScanResult Scan(IEnumerable<string> processNames, bool includePrivateRemotes = false)
+    {
+        var patterns = NormalizePatterns(processNames);
+        if (patterns.Count == 0)
+        {
+            return new ScanResult([], 0, 0, 0, 0, "no process names configured");
+        }
 
         var pids = new Dictionary<int, string>();
+        var matchedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var proc in Process.GetProcesses())
         {
             try
             {
-                if (wanted.Contains(proc.ProcessName))
-                    pids[proc.Id] = proc.ProcessName;
+                if (!NameMatches(proc.ProcessName, patterns))
+                    continue;
+                pids[proc.Id] = proc.ProcessName;
+                matchedNames.Add(proc.ProcessName);
             }
             catch
             {
@@ -64,12 +72,18 @@ public static class ConnectionDiscovery
         }
 
         if (pids.Count == 0)
-            return [];
+        {
+            var wanted = string.Join(", ", patterns);
+            return new ScanResult([], 0, 0, 0, 0,
+                $"no running processes matched [{wanted}] — check Processes tab / Track selected");
+        }
 
         var dns = DnsCacheReader.GetIpToHostMap();
         var rows = TcpTableReader.GetIpv4Rows();
         var results = new List<DiscoveredEndpoint>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var established = 0;
+        var skippedPrivate = 0;
 
         var candidates = new List<(string Name, int Pid, IPAddress Addr, int Port, string? Host)>();
         foreach (var row in rows)
@@ -78,8 +92,13 @@ public static class ConnectionDiscovery
                 continue;
             if (row.State != 5) // MIB_TCP_STATE_ESTAB
                 continue;
-            if (IsPrivateOrLocal(row.RemoteAddress))
+            established++;
+
+            if (!includePrivateRemotes && IsPrivateOrLocal(row.RemoteAddress))
+            {
+                skippedPrivate++;
                 continue;
+            }
 
             dns.TryGetValue(row.RemoteAddress.ToString(), out var host);
             var key = $"{name}|{row.RemoteAddress}|{host}";
@@ -104,9 +123,69 @@ public static class ConnectionDiscovery
                 geo.AsnDisplay));
         }
 
-        return results
+        var endpoints = results
             .OrderBy(r => r.Hostname ?? r.RemoteAddress.ToString(), StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        var detail =
+            $"{matchedNames.Count} process name(s) ({string.Join(", ", matchedNames.OrderBy(n => n))}), " +
+            $"{pids.Count} PID(s), {established} established, {skippedPrivate} private skipped" +
+            (includePrivateRemotes ? " (private included)" : "");
+
+        return new ScanResult(endpoints, matchedNames.Count, pids.Count, established, skippedPrivate, detail);
+    }
+
+    public static HashSet<int> ResolvePids(IEnumerable<string> processNames)
+    {
+        var patterns = NormalizePatterns(processNames);
+        var pids = new HashSet<int>();
+        if (patterns.Count == 0)
+            return pids;
+
+        foreach (var proc in Process.GetProcesses())
+        {
+            try
+            {
+                if (NameMatches(proc.ProcessName, patterns))
+                    pids.Add(proc.Id);
+            }
+            catch { /* ignore */ }
+            finally { proc.Dispose(); }
+        }
+
+        return pids;
+    }
+
+    public static List<string> NormalizePatterns(IEnumerable<string> processNames) =>
+        processNames
+            .Select(p => p.Trim())
+            .Where(p => p.Length > 0)
+            .Select(p => p.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? p[..^4] : p)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    public static bool NameMatches(string processName, IEnumerable<string> patterns)
+    {
+        foreach (var raw in patterns)
+        {
+            var pattern = raw.Trim();
+            if (pattern.Length == 0)
+                continue;
+
+            if (pattern.EndsWith('*'))
+            {
+                var prefix = pattern[..^1];
+                if (prefix.Length == 0 ||
+                    processName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return true;
+                continue;
+            }
+
+            if (processName.Equals(pattern, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     public static bool IsPrivateOrLocal(IPAddress ip)

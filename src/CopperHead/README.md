@@ -10,7 +10,7 @@ Windows admin utility that keeps **/32 host routes** pointed at a chosen NIC (fo
 - Periodic DNS refresh
 - **Tracert** — pins the target via the selected NIC, then streams live `tracert -d` output (first hop should be your tether gateway)
 - **Processes** tab — detect running processes (name, PID, path), filter, track selected
-- **Discover** tab — watch tracked process TCP connections + DNS cache; Country/ASN labels (Team Cymru); sortable columns; newly vs previously discovered; paired with Traffic
+- **Discover** tab — watch tracked process TCP connections + DNS cache; Country/ASN labels (Team Cymru); sortable columns; newly vs previously discovered; paired with Traffic. Use **Include private/LAN** on office/proxy networks; `Cursor*` matches helper processes.
 - **Traffic** tab — TX/s, RX/s, session and all-time totals per IP:port; Country/ASN; sortable columns; pin favourites to top
 - **Logs** tab — per-process JSONL history with HTML reports
 - **Fetch list** — pull a shared hostname file from a raw git URL and merge

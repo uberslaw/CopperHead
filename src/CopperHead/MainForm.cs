@@ -43,7 +43,7 @@ public sealed class MainForm : Form
     private readonly Label _status = new() { Text = "Stopped", AutoSize = true, Padding = new Padding(8, 8, 8, 8) };
 
     // Processes tab
-    private readonly TextBox _watchProcesses = new() { Dock = DockStyle.Fill, PlaceholderText = "Cursor, MyLicenseApp" };
+    private readonly TextBox _watchProcesses = new() { Dock = DockStyle.Fill, PlaceholderText = "Cursor, Cursor*" };
     private readonly Button _applyProcess = new() { Text = "Apply tracked", AutoSize = true };
     private readonly TextBox _processFilter = new() { Dock = DockStyle.Fill, PlaceholderText = "Filter by name or path…" };
     private readonly ListView _processList = new()
@@ -90,6 +90,12 @@ public sealed class MainForm : Form
     private readonly Button _addSelected = new() { Text = "Add selected to hosts", AutoSize = true };
     private readonly Button _addAll = new() { Text = "Add all new to hosts", AutoSize = true };
     private readonly CheckBox _autoAdd = new() { Text = "Auto-add new discoveries", AutoSize = true };
+    private readonly CheckBox _includePrivate = new()
+    {
+        Text = "Include private/LAN (corp proxy)",
+        AutoSize = true,
+        Checked = true,
+    };
     private readonly NumericUpDown _discoverInterval = new() { Minimum = 5, Maximum = 600, Value = 15, Width = 70 };
     private readonly TextBox _hostListUrl = new() { Dock = DockStyle.Fill, PlaceholderText = "https://raw.githubusercontent.com/.../hosts.txt" };
     private readonly Button _fetchList = new() { Text = "Fetch list", AutoSize = true };
@@ -521,12 +527,13 @@ public sealed class MainForm : Form
         btnRow.Controls.Add(_addSelected);
         btnRow.Controls.Add(_addAll);
         btnRow.Controls.Add(_autoAdd);
+        btnRow.Controls.Add(_includePrivate);
         btnRow.Controls.Add(_discoverStatus);
         root.Controls.Add(btnRow, 0, 2);
 
         root.Controls.Add(new Label
         {
-            Text = "Optional: pull a shared hostname list from git (raw URL). Merges into the Routes list. Set tracked process on the Processes tab.",
+            Text = "Tracked process is set on the Processes tab (e.g. Cursor or Cursor*). Office proxies often need Include private/LAN. Host list URL merges into Routes.",
             AutoSize = true,
             Padding = new Padding(0, 8, 0, 4),
         }, 0, 3);
@@ -726,6 +733,7 @@ public sealed class MainForm : Form
         _stopWatchDiscover.Click += async (_, _) => await StopBothMonitorsAsync();
         _addSelected.Click += (_, _) => AddDiscoveriesToHosts(selectedOnly: true);
         _addAll.Click += (_, _) => AddDiscoveriesToHosts(selectedOnly: false, newOnly: true);
+        _includePrivate.CheckedChanged += (_, _) => SaveConfig();
         _fetchList.Click += async (_, _) => await FetchHostListAsync();
         _applyProcess.Click += (_, _) =>
         {
@@ -792,6 +800,7 @@ public sealed class MainForm : Form
         _watchProcesses.Text = config.WatchProcesses ?? "Cursor";
         _hostListUrl.Text = config.HostListUrl ?? "";
         _autoAdd.Checked = config.AutoAddDiscoveries;
+        _includePrivate.Checked = config.IncludePrivateRemotes ?? true;
         _discoverInterval.Value = Math.Clamp(config.DiscoverSeconds <= 0 ? 15 : config.DiscoverSeconds, 5, 600);
         _traffic.SetPinned(config.PinnedTrafficKeys ?? []);
         var sortCol = config.TrafficSortColumn;
@@ -828,6 +837,7 @@ public sealed class MainForm : Form
             WatchProcesses = _watchProcesses.Text.Trim(),
             HostListUrl = _hostListUrl.Text.Trim(),
             AutoAddDiscoveries = _autoAdd.Checked,
+            IncludePrivateRemotes = _includePrivate.Checked,
             DiscoverSeconds = (int)_discoverInterval.Value,
             PinnedTrafficKeys = _traffic.PinnedKeys.ToList(),
             TrafficSortColumn = _trafficSortColumn,
@@ -1089,7 +1099,8 @@ public sealed class MainForm : Form
 
         try
         {
-            var found = ConnectionDiscovery.Scan(names);
+            var scan = ConnectionDiscovery.Scan(names, includePrivateRemotes: _includePrivate.Checked);
+            var found = scan.Endpoints;
             var brandNew = new List<string>();
             foreach (var item in found)
             {
@@ -1113,7 +1124,10 @@ public sealed class MainForm : Form
 
             RefreshDiscoveryList();
             _discoverStatus.Text = $"{_sessionNewKeys.Count} new / {_knownBeforeSession.Count} previous";
-            AppendLog($"DISCOVER {found.Count} live connection(s), {brandNew.Count} newly discovered");
+            AppendLog($"DISCOVER {found.Count} live · {brandNew.Count} new · {scan.Detail}");
+
+            if (found.Count == 0 && scan.SkippedPrivate > 0 && !_includePrivate.Checked)
+                AppendLog("DISCOVER tip: enable Include private/LAN — office proxies often only show private remotes.");
 
             if (autoAdd && brandNew.Count > 0)
             {
@@ -1335,14 +1349,16 @@ public sealed class MainForm : Form
                 try
                 {
                     string[] procs = [];
+                    var includePrivate = true;
                     Invoke(() =>
                     {
                         ApplyProcessContext(force: false);
                         procs = _watchProcesses.Text
                             .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                        includePrivate = _includePrivate.Checked;
                     });
 
-                    var rows = _traffic.Sample(procs);
+                    var rows = _traffic.Sample(procs, includePrivateRemotes: includePrivate);
                     Invoke(() =>
                     {
                         _trafficRows = rows.ToList();

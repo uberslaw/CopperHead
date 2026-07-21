@@ -14,6 +14,8 @@ public sealed class AppConfig
     public string WatchProcesses { get; set; } = "Cursor";
     public string? HostListUrl { get; set; }
     public bool AutoAddDiscoveries { get; set; }
+    /// <summary>Null = default on (needed for corp proxies). Explicit true/false from UI.</summary>
+    public bool? IncludePrivateRemotes { get; set; }
     public int DiscoverSeconds { get; set; } = 15;
     public List<string> PinnedTrafficKeys { get; set; } = new();
     public int TrafficSortColumn { get; set; } = 10; // All time TX default (desc)
